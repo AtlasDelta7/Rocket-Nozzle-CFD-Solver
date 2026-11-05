@@ -15,6 +15,8 @@ const FIELDS = [
   { id: 'vort',   label: 'Vorticity',        unit: '1/s' },
   { id: 'exh',    label: 'Exhaust fraction', unit: '' },
   { id: 'flame',  label: 'Flame (visual)',   unit: '' },
+  { id: 'turb',   label: 'Eddy viscosity',   unit: '' },
+  { id: 'burn',   label: 'Afterburn',        unit: '' },
 ];
 
 const COLORMAPS = {
@@ -61,11 +63,12 @@ uniform vec4 uTscale;         // (T_REF, Tc_K, Ta_K, unused)
 uniform float uSchlGain;
 uniform float uVelScale;      // U_REF
 uniform float uDx;            // cell size (m)
+uniform sampler2D uT2;        // (effective viscosity, h, strain, laminar viscosity)
 out vec4 o;
 Prim P(ivec2 c) {
   c = clamp(c, ivec2(0), uN - 1);
   if (solidAt(c)) c = clamp(c, ivec2(0), uN - 1);
-  return toPrim(texelFetch(uA, c, 0), texelFetch(uB, c, 0).r);
+  return toPrim(texelFetch(uA, c, 0), texelFetch(uB, c, 0));
 }
 float lrho(ivec2 c) {
   ivec2 cc = clamp(c, ivec2(0), uN - 1);
@@ -77,10 +80,10 @@ void main() {
   if (solidAt(ij)) { o = vec4(0.0, 0.0, 0.0, -1.0); return; }
   Prim q = P(ij);
   float rho = q.w.x, p = q.w.w;
-  float c = sqrt(uGamma * p / rho);
+  float c = soundSpeed(q);
   float spd = length(q.w.yz);
   float M = spd / c;
-  float Rm = mix(uRaN, uReN, q.y);
+  float Rm = mix(uRaN, uReN, q.s.x);
   float T = p / (rho * Rm) * uTscale.x;
   float v = 0.0;
   if (uField == 0) v = T;
@@ -100,17 +103,19 @@ void main() {
   else if (uField == 5) v = spd * uVelScale;
   else if (uField == 6) {
     Prim e = P(ij + ivec2(1, 0)), w = P(ij - ivec2(1, 0)), n = P(ij + ivec2(0, 1));
-    Prim s = Prim(vec4(q.w.x, q.w.y, -q.w.z, q.w.w), q.y);
+    Prim s = Prim(vec4(q.w.x, q.w.y, -q.w.z, q.w.w), q.s);
     if (ij.y > 0) s = P(ij - ivec2(0, 1));
     float om = 0.5 * (e.w.z - w.w.z) - 0.5 * (n.w.y - s.w.y);
     v = abs(om) * uVelScale / uDx;
   }
-  else if (uField == 7) v = q.y;
+  else if (uField == 7) v = q.s.x;
+  else if (uField == 9) { vec4 m = texelFetch(uT2, ij, 0); v = m.w > 0.0 ? log(max(m.x / m.w, 1.0)) / log(10.0) : 0.0; }
+  else if (uField == 10) v = q.s.x > 0.003 ? (q.s.x - q.s.y) / q.s.x : 0.0;
   else v = T;
   float t = (v - uRange.x) / (uRange.y - uRange.x);
   if (uField == 2) t = v;
   if (uField == 6) t = log(1.0 + 20.0 * max(v, 0.0) / uRange.y) / log(21.0);
-  o = vec4(t, q.y, (T - uTscale.z) / max(uTscale.y - uTscale.z, 1.0), M);
+  o = vec4(t, q.s.x, (T - uTscale.z) / max(uTscale.y - uTscale.z, 1.0), M);
 }
 `;
 
@@ -404,8 +409,7 @@ class Renderer {
     gl.bindVertexArray(s.vao);
     gl.useProgram(pr.p);
     gl.uniform2i(pr.u.uN, s.Nx, s.Nr);
-    gl.uniform1f(pr.u.uGamma, V.gamma);
-    s._bindTex(pr, 'uA', s.state.A, 0); s._bindTex(pr, 'uB', s.state.B, 1); s._bindTex(pr, 'uMask', s.mask, 2);
+    s._bindTex(pr, 'uA', s.state.A, 0); s._bindTex(pr, 'uB', s.state.B, 1); s._bindTex(pr, 'uMask', s.mask, 2); s._bindTex(pr, 'uT2', s.vis.T2, 3);
     gl.uniform1i(pr.u.uField, V.fieldIndex === 8 ? 0 : V.fieldIndex);
     gl.uniform2f(pr.u.uRange, V.range[0], V.range[1]);
     gl.uniform1f(pr.u.uReN, V.ReN); gl.uniform1f(pr.u.uRaN, V.RaN);

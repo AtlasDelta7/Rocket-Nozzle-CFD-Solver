@@ -13,6 +13,10 @@ const T_REF = 288.15;
 const R_REF = R_AIR;
 const RHO_REF = P_REF / (R_REF * T_REF);   // 1.225 kg/m^3
 const U_REF = Math.sqrt(P_REF / RHO_REF);  // ~287.6 m/s
+const GAMMA_AIR = 1.4;
+// Kinetic time of the afterburning limit: tau = CHEM_TAU0 / p[atm] * exp(9000 K / T),
+// about 0.1 ms at 1200 K and 1 atm (order of H2/CO-air ignition delays).
+const CHEM_TAU0 = 5.5e-8;
 
 // ---------------------------------------------------------------------------
 // US Standard Atmosphere 1976 (geopotential approx, 0–86 km)
@@ -197,15 +201,18 @@ function buildContour(o) {
 // ---------------------------------------------------------------------------
 // Presets
 // ---------------------------------------------------------------------------
+// qAb: heat released when the exhaust's CO and H2 burn in air (MJ per kg of exhaust).
+// sAir: air needed to burn it (kg per kg of exhaust). Estimates from chemical
+// equilibrium at typical fuel-rich mixture ratios; solid and hydrazine by hand.
 const PROPELLANTS = {
-  kerolox:  { name: 'LOX / RP-1 (kerolox)',  Tc: 3670, gamma: 1.22, Mw: 22.0 },
-  methalox: { name: 'LOX / CH4 (methalox)',  Tc: 3550, gamma: 1.21, Mw: 20.5 },
-  hydrolox: { name: 'LOX / LH2 (hydrolox)',  Tc: 3400, gamma: 1.20, Mw: 13.5 },
-  hybrid:   { name: 'N2O / HTPB (hybrid)',   Tc: 3150, gamma: 1.23, Mw: 26.0 },
-  solid:    { name: 'APCP (solid motor)',    Tc: 3100, gamma: 1.20, Mw: 25.0 },
-  hydrazine:{ name: 'Hydrazine monoprop',    Tc: 1150, gamma: 1.28, Mw: 13.0 },
-  coldgas:  { name: 'Cold gas (nitrogen)',   Tc: 300,  gamma: 1.40, Mw: 28.0 },
-  custom:   { name: 'Custom',                Tc: 3000, gamma: 1.22, Mw: 22.0 },
+  kerolox:  { name: 'LOX / RP-1 (kerolox)',  Tc: 3670, gamma: 1.22, Mw: 22.0, qAb: 6.8, sAir: 1.8 },
+  methalox: { name: 'LOX / CH4 (methalox)',  Tc: 3550, gamma: 1.21, Mw: 20.5, qAb: 3.0, sAir: 0.8 },
+  hydrolox: { name: 'LOX / LH2 (hydrolox)',  Tc: 3400, gamma: 1.20, Mw: 13.5, qAb: 4.2, sAir: 1.2 },
+  hybrid:   { name: 'N2O / HTPB (hybrid)',   Tc: 3150, gamma: 1.23, Mw: 26.0, qAb: 2.0, sAir: 0.5 },
+  solid:    { name: 'APCP (solid motor)',    Tc: 3100, gamma: 1.20, Mw: 25.0, qAb: 4.6, sAir: 1.2 },
+  hydrazine:{ name: 'Hydrazine monoprop',    Tc: 1150, gamma: 1.28, Mw: 13.0, qAb: 14.0, sAir: 4.2 },
+  coldgas:  { name: 'Cold gas (nitrogen)',   Tc: 300,  gamma: 1.40, Mw: 28.0, qAb: 0, sAir: 1 },
+  custom:   { name: 'Custom',                Tc: 3000, gamma: 1.22, Mw: 22.0, qAb: 3.0, sAir: 1 },
 };
 
 const ENGINE_PRESETS = {

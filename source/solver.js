@@ -1,12 +1,19 @@
 // ============================================================================
-// solver.js — WebGL2 GPU solver for the 2-D axisymmetric compressible Euler
-// equations + a passive exhaust scalar.
+// solver.js — WebGL2 GPU solver for the 2-D axisymmetric compressible
+// Navier-Stokes equations with a two-gas (exhaust + air) mixture.
 //   * Finite volume, uniform square cells (dx = dr = 1 in grid units)
 //   * MUSCL reconstruction of primitives (van Leer limiter)
 //   * HLLC Riemann solver, blended to HLL near strong shocks (anti-carbuncle)
 //   * SSP-RK2 (Heun) time stepping, CFL time step computed on the GPU
-//   * Staircase solid walls via mirror ghost states
-// State textures (RGBA32F): A = (rho, rho*u, rho*v, E), B = (rho*Y, 0, 0, 0)
+//   * Gamma varies with the mixture: G = 1/(gamma-1) is advected in the
+//     non-conservative form that keeps pressure uniform across material
+//     interfaces (Abgrall 1996; Johnsen & Colonius 2006)
+//   * Split step after each RK2 step: Sutherland + eddy viscosity (Smagorinsky
+//     or mixing length, with a Ducros shock sensor), wall-modelled shear and
+//     heat transfer (Werner-Wengle, Reynolds analogy), and mixing-limited
+//     afterburning with a finite-rate ignition limit
+// State textures (RGBA32F): A = (rho, rho*u, rho*v, E), B = (rho*Z, rho*F, G, 0)
+//   Z = exhaust mass fraction, F = exhaust still carrying unburnt fuel
 // All quantities are normalised: p/P_REF, rho/RHO_REF, u/U_REF.
 // ============================================================================
 'use strict';
@@ -16,20 +23,21 @@ precision highp float;
 precision highp int;
 precision highp sampler2D;
 uniform ivec2 uN;          // Nx, Nr
-uniform float uGamma;
 uniform sampler2D uMask;   // r > 0.5 : solid
 const float RHO_MIN = 1e-7;
 const float P_MIN   = 1e-7;
-struct Prim { vec4 w; float y; };   // w = (rho, u, v, p)
+struct Prim { vec4 w; vec3 s; };    // w = (rho, u, v, p), s = (Z, F, G)
 
 bool solidAt(ivec2 c) { return texelFetch(uMask, c, 0).r > 0.5; }
 
-Prim toPrim(vec4 a, float b) {
+Prim toPrim(vec4 a, vec4 b) {
   float rho = max(a.x, RHO_MIN);
   vec2 vel = a.yz / rho;
-  float p = max((uGamma - 1.0) * (a.w - 0.5 * rho * dot(vel, vel)), P_MIN);
-  return Prim(vec4(rho, vel, p), clamp(b / rho, 0.0, 1.0));
+  float G = max(b.z, 0.5);
+  float p = max((a.w - 0.5 * rho * dot(vel, vel)) / G, P_MIN);
+  return Prim(vec4(rho, vel, p), vec3(clamp(b.x / rho, 0.0, 1.0), clamp(b.y / rho, 0.0, 1.0), G));
 }
+float soundSpeed(Prim q) { return sqrt((1.0 + 1.0 / q.s.z) * q.w.w / q.w.x); }
 `;
 
 const VS_QUAD = `#version 300 es
@@ -51,18 +59,19 @@ uniform sampler2D uStep;    // (dt, t_old, t_new, wmax)
 uniform int uTimeSel;       // 1 -> t_old, 2 -> t_new
 uniform vec4 uAmb;          // freestream primitive (rho, u, v, p), Y = 0
 uniform vec3 uRes;          // reservoir: (P0 target, T0 normalised, R_exhaust normalised)
+uniform vec4 uInlet;        // (unused here, acoustic absorption 0-1, G exhaust, G air)
 uniform float uPambStart;   // pressure at which the ignition ramp starts
 uniform float uRamp;        // ramp duration (grid time units); <= 0 -> instant
 uniform float uRcCells;     // chamber radius in cells (reservoir rows)
 layout(location = 0) out vec4 oW;
 layout(location = 1) out vec4 oWb;
-Prim interior(ivec2 c) { return toPrim(texelFetch(uA, c, 0), texelFetch(uB, c, 0).r); }
+Prim interior(ivec2 c) { return toPrim(texelFetch(uA, c, 0), texelFetch(uB, c, 0)); }
 void main() {
   ivec2 P = ivec2(gl_FragCoord.xy) - 2;
   int i = P.x, j = P.y, Nx = uN.x, Nr = uN.y;
   bool mir = j < 0;
   if (mir) j = -j - 1;
-  Prim q = Prim(uAmb, 0.0);
+  Prim q = Prim(uAmb, vec3(0.0, 0.0, uInlet.w));
   bool wall = false;
   if (i < 0) {
     // left boundary: injector face (stagnation inlet) / chamber wall / free stream
@@ -72,19 +81,26 @@ void main() {
       float t = uTimeSel == 1 ? st.y : st.z;
       float f = uRamp > 0.0 ? smoothstep(0.0, uRamp, t) : 1.0;
       float P0 = mix(uPambStart, uRes.x, f);
-      float T0 = uRes.y, R = uRes.z, g = uGamma;
+      float T0 = uRes.y, R = uRes.z, G = uInlet.z, g = 1.0 + 1.0 / G;
       vec4 a = texelFetch(uA, ivec2(0, j), 0);
-      float u = clamp(a.y / max(a.x, RHO_MIN), 0.0, 0.5 * sqrt(g * R * T0));
+      float ubar = max(texelFetch(uB, ivec2(0, j), 0).w, 0.0);   // slow average of the inflow speed
+      float c0 = sqrt(g * R * T0);
+      float ui = clamp(a.y / max(a.x, RHO_MIN), 0.0, 0.5 * c0);
+      // Absorbing injector face: holding the ghost speed at its slow average lets the
+      // Riemann solver pass outgoing acoustic waves straight through, so the chamber
+      // does not ring, while the mean flow still settles to the chamber pressure asked for.
+      float ut = ubar * smoothstep(1.0, 2.0, P0 / max(uPambStart, 1e-6));
+      float u = mix(ui, ut, uInlet.y);
       float T = T0 - u * u * (g - 1.0) / (2.0 * g * R);
-      float p = P0 * pow(T / T0, g / (g - 1.0));
-      q = Prim(vec4(p / (R * T), u, 0.0, p), 1.0);
+      float p = P0 * pow(T / T0, g * G);
+      q = Prim(vec4(p / (R * T), u, 0.0, p), vec3(1.0, 1.0, G));
     }
   } else if (j >= Nr) {
     // top: pressure far field
     ivec2 c = ivec2(min(i, Nx - 1), Nr - 1);
     if (!solidAt(c)) {
       Prim t = interior(c);
-      float cs = sqrt(uGamma * t.w.w / t.w.x);
+      float cs = soundSpeed(t);
       if (t.w.z >= cs) q = t;
       else if (t.w.z > 0.0) { q = t; q.w.w = uAmb.w; }
     }
@@ -93,7 +109,7 @@ void main() {
     ivec2 c = ivec2(Nx - 1, j);
     if (!solidAt(c)) {
       Prim t = interior(c);
-      float cs = sqrt(uGamma * t.w.w / t.w.x);
+      float cs = soundSpeed(t);
       if (t.w.y >= cs) q = t;
       else if (t.w.y > 0.0) { q = t; q.w.w = uAmb.w; }
       else q.w.y = max(q.w.y, 0.0);
@@ -103,7 +119,7 @@ void main() {
   }
   if (wall) { oW = vec4(-1.0, 0.0, 0.0, 1.0); oWb = vec4(0.0); return; }
   if (mir) q.w.z = -q.w.z;           // axis of symmetry
-  oW = q.w; oWb = vec4(q.y, 0.0, 0.0, 0.0);
+  oW = q.w; oWb = vec4(q.s, 0.0);
 }
 `;
 
@@ -116,7 +132,7 @@ function makeFluxShader(dirR) { return GLSL_COMMON + `
 #define DIR_R ${dirR ? 1 : 0}
 uniform sampler2D uGeoA;    // (V, Am, Ax_west, Ar_south); negative area => first order
 uniform sampler2D uW;       // padded primitive (rho, u, v, p); rho < 0 marks a wall cell
-uniform sampler2D uWb;      // padded (Y, 0, 0, 0)
+uniform sampler2D uWb;      // padded (Z, F, G, 0)
 uniform float uLimiter;     // 0 = first order, 1 = second order
 uniform float uHllBlend;    // sensitivity of HLL blending (0 disables)
 layout(location = 0) out vec4 oF;
@@ -126,7 +142,7 @@ Prim cellP(int i, int j, out bool s) {
   ivec2 c = ivec2(i + 2, j + 2);
   vec4 w = texelFetch(uW, c, 0);
   s = w.x < 0.0;
-  Prim q = Prim(w, texelFetch(uWb, c, 0).r);
+  Prim q = Prim(w, texelFetch(uWb, c, 0).xyz);
 #if DIR_R
   q.w.yz = q.w.zy;          // face-normal frame: normal velocity in .y
 #endif
@@ -139,7 +155,6 @@ vec4 vanLeer(vec4 a, vec4 b) {
   den = mix(den, vec4(1.0), step(abs(den), vec4(1e-30)));
   return 2.0 * max(ab, vec4(0.0)) / den;
 }
-float vanLeer1(float a, float b) { float ab = a * b; return ab > 0.0 ? 2.0 * ab / (a + b) : 0.0; }
 float jumpRatio(float a, float b) { return abs(a - b) / min(a, b); }
 
 void main() {
@@ -180,58 +195,61 @@ void main() {
     if (uLimiter > 0.5 && area > 0.0) {
       vec4 dL = vanLeer(c1.w - c0.w, c2.w - c1.w);
       vec4 dR = vanLeer(c2.w - c1.w, c3.w - c2.w);
-      float yL = vanLeer1(c1.y - c0.y, c2.y - c1.y);
-      float yR = vanLeer1(c2.y - c1.y, c3.y - c2.y);
+      vec3 yL = vanLeer(vec4(c1.s - c0.s, 0.0), vec4(c2.s - c1.s, 0.0)).xyz;
+      vec3 yR = vanLeer(vec4(c2.s - c1.s, 0.0), vec4(c3.s - c2.s, 0.0)).xyz;
       vec4 tL = c1.w + 0.5 * dL, tR = c2.w - 0.5 * dR;
       if (tL.x > 0.0 && tL.w > 0.0 && tR.x > 0.0 && tR.w > 0.0) {
-        WL = Prim(tL, clamp(c1.y + 0.5 * yL, 0.0, 1.0));
-        WR = Prim(tR, clamp(c2.y - 0.5 * yR, 0.0, 1.0));
+        WL = Prim(tL, clamp(c1.s + 0.5 * yL, vec3(0.0, 0.0, 0.5), vec3(1.0, 1.0, 100.0)));
+        WR = Prim(tR, clamp(c2.s - 0.5 * yR, vec3(0.0, 0.0, 0.5), vec3(1.0, 1.0, 100.0)));
       }
     }
   }
   // ---- HLLC Riemann solver (blended to HLL by hllw), face-normal frame
-  float g = uGamma;
+  float GL = WL.s.z, GR = WR.s.z;
   float rL = WL.w.x, uL = WL.w.y, vL = WL.w.z, pL = WL.w.w;
   float rR = WR.w.x, uR = WR.w.y, vR = WR.w.z, pR = WR.w.w;
-  float cL = sqrt(g * pL / rL), cR = sqrt(g * pR / rR);
-  float EL = pL / (g - 1.0) + 0.5 * rL * (uL * uL + vL * vL);
-  float ER = pR / (g - 1.0) + 0.5 * rR * (uR * uR + vR * vR);
+  float cL = sqrt((1.0 + 1.0 / GL) * pL / rL), cR = sqrt((1.0 + 1.0 / GR) * pR / rR);
+  float EL = pL * GL + 0.5 * rL * (uL * uL + vL * vL);
+  float ER = pR * GR + 0.5 * rR * (uR * uR + vR * vR);
   float sL = sqrt(rL), sR = sqrt(rR);
   float uT = (sL * uL + sR * uR) / (sL + sR);
   float HT = (sL * (EL + pL) / rL + sR * (ER + pR) / rR) / (sL + sR);
   float vT = (sL * vL + sR * vR) / (sL + sR);
-  float cT = sqrt(max((g - 1.0) * (HT - 0.5 * (uT * uT + vT * vT)), 1e-12));
+  float GT = (sL * GL + sR * GR) / (sL + sR);
+  float cT = sqrt(max((HT - 0.5 * (uT * uT + vT * vT)) / GT, 1e-12));
   float SL = min(uL - cL, uT - cT);
   float SR = max(uR + cR, uT + cT);
   vec4 FL = vec4(rL * uL, rL * uL * uL + pL, rL * uL * vL, uL * (EL + pL));
   vec4 FR = vec4(rR * uR, rR * uR * uR + pR, rR * uR * vR, uR * (ER + pR));
-  float FYL = rL * uL * WL.y, FYR = rR * uR * WR.y;
-  vec4 F; float FY;
-  if (SL >= 0.0) { F = FL; FY = FYL; }
-  else if (SR <= 0.0) { F = FR; FY = FYR; }
+  vec2 FYL = rL * uL * WL.s.xy, FYR = rR * uR * WR.s.xy;
+  vec4 F; vec2 FY; float uf, Gf;     // uf, Gf: face speed and upwind G for the G equation
+  if (SL >= 0.0) { F = FL; FY = FYL; uf = uL; Gf = GL; }
+  else if (SR <= 0.0) { F = FR; FY = FYR; uf = uR; Gf = GR; }
   else {
     vec4 UL = vec4(rL, rL * uL, rL * vL, EL);
     vec4 UR = vec4(rR, rR * uR, rR * vR, ER);
     float inv = 1.0 / (SR - SL);
     vec4 Fhll = (SR * FL - SL * FR + SL * SR * (UR - UL)) * inv;
-    float FYhll = (SR * FYL - SL * FYR + SL * SR * (rR * WR.y - rL * WL.y)) * inv;
+    vec2 FYhll = (SR * FYL - SL * FYR + SL * SR * (rR * WR.s.xy - rL * WL.s.xy)) * inv;
     float Ss = (pR - pL + rL * uL * (SL - uL) - rR * uR * (SR - uR)) / (rL * (SL - uL) - rR * (SR - uR));
     bool left = Ss >= 0.0;
     float rK = left ? rL : rR, uK = left ? uL : uR, vK = left ? vL : vR, pK = left ? pL : pR;
-    float EK = left ? EL : ER, SK = left ? SL : SR, YK = left ? WL.y : WR.y;
+    float EK = left ? EL : ER, SK = left ? SL : SR;
+    vec2 YK = left ? WL.s.xy : WR.s.xy, FYK = left ? FYL : FYR;
     vec4 FK = left ? FL : FR, UK = left ? UL : UR;
-    float FYK = left ? FYL : FYR;
     float kk = rK * (SK - uK) / (SK - Ss);
     vec4 Us = kk * vec4(1.0, Ss, vK, EK / rK + (Ss - uK) * (Ss + pK / (rK * (SK - uK))));
     vec4 Fc = FK + SK * (Us - UK);
-    float FYc = FYK + SK * (kk * YK - rK * YK);
+    vec2 FYc = FYK + SK * (kk * YK - rK * YK);
     F = mix(Fc, Fhll, hllw);
     FY = mix(FYc, FYhll, hllw);
+    uf = uK + SK * ((SK - uK) / (SK - Ss) - 1.0);
+    Gf = left ? GL : GR;
   }
 #if DIR_R
   F = vec4(F.x, F.z, F.y, F.w);       // rotate momentum back to (x, r)
 #endif
-  oF = F; oFY = vec4(FY, 0.0, 0.0, 0.0);
+  oF = F; oFY = vec4(FY, uf * Gf, uf);
 }
 `; }
 const FS_FLUX_X = makeFluxShader(false);
@@ -253,23 +271,26 @@ uniform sampler2D uGeoM;  // (host dx, host dy, slave mask, kappa)
 uniform sampler2D uStep;
 uniform int uStage;       // 1 or 2
 uniform vec4 uAmbCons;    // conserved freestream state written into solid cells
+uniform vec4 uAmbB;       // freestream B state
+uniform vec2 uGamR;       // allowed range of G
+uniform vec3 uBar;        // inflow-speed average: (inverse averaging time, upper limit, end of ignition ramp)
 uniform float uVmax;      // velocity clamp (normalised)
 layout(location = 0) out vec4 oA;
 layout(location = 1) out vec4 oB;
 
 // net flux (r-weighted areas) out of one member cell
-void memberFlux(ivec2 c, inout vec4 L, inout float LY) {
+void memberFlux(ivec2 c, inout vec4 L, inout vec4 LY) {
   vec4 g = texelFetch(uGeoA, c, 0);
   float aw = abs(g.z), ae = abs(texelFetch(uGeoA, c + ivec2(1, 0), 0).z);
   float as_ = abs(g.w), an = abs(texelFetch(uGeoA, c + ivec2(0, 1), 0).w);
   L  -= ae * texelFetch(uFxA, c + ivec2(1, 0), 0) - aw * texelFetch(uFxA, c, 0);
   L  -= an * texelFetch(uFrA, c + ivec2(0, 1), 0) - as_ * texelFetch(uFrA, c, 0);
-  LY -= ae * texelFetch(uFxB, c + ivec2(1, 0), 0).r - aw * texelFetch(uFxB, c, 0).r;
-  LY -= an * texelFetch(uFrB, c + ivec2(0, 1), 0).r - as_ * texelFetch(uFrB, c, 0).r;
+  LY -= ae * texelFetch(uFxB, c + ivec2(1, 0), 0) - aw * texelFetch(uFxB, c, 0);
+  LY -= an * texelFetch(uFrB, c + ivec2(0, 1), 0) - as_ * texelFetch(uFrB, c, 0);
 }
 // pressure on a slip wall from the reflected Riemann problem
 float wallPressure(Prim q, float un) {
-  float g = uGamma, p = q.w.w, rho = q.w.x, c = sqrt(g * p / rho);
+  float g = 1.0 + 1.0 / q.s.z, p = q.w.w, rho = q.w.x, c = sqrt(g * p / rho);
   if (un > 0.0) { float a = 0.25 * (g + 1.0) * un; return p + rho * un * (a + sqrt(a * a + c * c)); }
   float f = max(1.0 + 0.5 * (g - 1.0) * un / c, 0.0);
   return p * pow(f, 2.0 * g / (g - 1.0));
@@ -277,14 +298,14 @@ float wallPressure(Prim q, float un) {
 
 void main() {
   ivec2 ij = ivec2(gl_FragCoord.xy);
-  if (solidAt(ij)) { oA = uAmbCons; oB = vec4(0.0); return; }
+  if (solidAt(ij)) { oA = uAmbCons; oB = uAmbB; return; }
   vec4 gm = texelFetch(uGeoM, ij, 0);
   ivec2 H = ij + ivec2(round(gm.xy));
   vec4 gg = texelFetch(uGeoG, ij, 0);
   vec4 A = texelFetch(uA, H, 0);
-  float B = texelFetch(uB, H, 0).r;
+  vec4 B = texelFetch(uB, H, 0);
   Prim q = toPrim(A, B);
-  vec4 L = vec4(0.0); float LY = 0.0;
+  vec4 L = vec4(0.0), LY = vec4(0.0);
   memberFlux(H, L, LY);
   int sm = int(round(texelFetch(uGeoM, H, 0).z));
   if ((sm & 1) != 0) memberFlux(H + ivec2(-1, 0), L, LY);
@@ -302,22 +323,31 @@ void main() {
   L.z += q.w.w * gg.y;             // axisymmetric geometric source  p * Am
   float invV = 1.0 / max(gg.x, 1e-6);
   float dt = texelFetch(uStep, ivec2(0), 0).x;
-  vec4 U; float UY;
-  if (uStage == 1) { U = A + dt * invV * L; UY = B + dt * invV * LY; }
+  vec4 LB = vec4(LY.xy, LY.z - q.s.z * LY.w, 0.0);   // G equation: dG/dt + div(uG) - G div(u) = 0
+  vec4 U, UY;
+  if (uStage == 1) { U = A + dt * invV * L; UY = B + dt * invV * LB; }
   else {
-    vec4 A0 = texelFetch(uA0, H, 0); float B0 = texelFetch(uB0, H, 0).r;
-    U = 0.5 * (A0 + A + dt * invV * L); UY = 0.5 * (B0 + B + dt * invV * LY);
+    vec4 A0 = texelFetch(uA0, H, 0), B0 = texelFetch(uB0, H, 0);
+    U = 0.5 * (A0 + A + dt * invV * L); UY = 0.5 * (B0 + B + dt * invV * LB);
   }
   // positivity / robustness fixes
   float rho = max(U.x, RHO_MIN);
   vec2 vel = U.yz / max(U.x, RHO_MIN);
   float sp = length(vel);
   if (sp > uVmax) vel *= uVmax / sp;
-  if (!(rho < 1e30) || !(vel.x < 1e30 && vel.x > -1e30)) { oA = uAmbCons; oB = vec4(0.0); return; } // NaN guard
+  if (!(rho < 1e30) || !(vel.x < 1e30 && vel.x > -1e30)) { oA = uAmbCons; oB = uAmbB; return; } // NaN guard
   float ke = 0.5 * rho * dot(vel, vel);
-  float E = max(U.w, P_MIN / (uGamma - 1.0) + ke);
+  float Gn = clamp(UY.z, uGamR.x, uGamR.y);
+  float E = max(U.w, P_MIN * Gn + ke);
+  float Zn = clamp(UY.x, 0.0, rho);
   oA = vec4(rho, rho * vel, E);
-  oB = vec4(clamp(UY, 0.0, rho), 0.0, 0.0, 0.0);
+  float ubar = 0.0;              // B.w, first column only: slow average of the inflow speed
+  if (ij.x == 0) {
+    float u0 = texelFetch(uB, ij, 0).w;
+    bool on = uStage == 2 && texelFetch(uStep, ivec2(0), 0).z > uBar.z;   // held until ignition has finished
+    ubar = on ? min(u0 + min(dt * uBar.x, 1.0) * (vel.x - u0), uBar.y) : u0;
+  }
+  oB = vec4(Zn, clamp(UY.y, 0.0, Zn), Gn, ubar);
 }
 `;
 
@@ -325,7 +355,7 @@ void main() {
 // Reduction passes for the CFL wave speed and the step info texture.
 // ---------------------------------------------------------------------------
 const FS_REDUCE1 = GLSL_COMMON + `
-uniform sampler2D uA;
+uniform sampler2D uA; uniform sampler2D uB;
 out vec4 o;
 void main() {
   ivec2 b = ivec2(gl_FragCoord.xy) * 4;
@@ -333,8 +363,8 @@ void main() {
   for (int dy = 0; dy < 4; dy++) for (int dx = 0; dx < 4; dx++) {
     ivec2 c = b + ivec2(dx, dy);
     if (c.x < uN.x && c.y < uN.y && !solidAt(c)) {
-      Prim q = toPrim(texelFetch(uA, c, 0), 0.0);
-      w = max(w, abs(q.w.y) + abs(q.w.z) + 2.0 * sqrt(uGamma * q.w.w / q.w.x));
+      Prim q = toPrim(texelFetch(uA, c, 0), texelFetch(uB, c, 0));
+      w = max(w, abs(q.w.y) + abs(q.w.z) + 2.0 * soundSpeed(q));
     }
   }
   o = vec4(w, 0.0, 0.0, 0.0);
@@ -378,19 +408,240 @@ const FS_RESCALE = GLSL_COMMON + `
 uniform sampler2D uA; uniform sampler2D uB;
 uniform vec4 uScale;      // (pressure factor, temperature factor, delta u, Y threshold)
 uniform vec4 uAmbCons;
+uniform vec4 uAmbB;
 layout(location = 0) out vec4 oA;
 layout(location = 1) out vec4 oB;
 void main() {
   ivec2 ij = ivec2(gl_FragCoord.xy);
-  vec4 A = texelFetch(uA, ij, 0); float B = texelFetch(uB, ij, 0).r;
-  if (solidAt(ij)) { oA = uAmbCons; oB = vec4(0.0); return; }
+  vec4 A = texelFetch(uA, ij, 0), B = texelFetch(uB, ij, 0);
+  if (solidAt(ij)) { oA = uAmbCons; oB = uAmbB; return; }
   Prim q = toPrim(A, B);
-  float w = 1.0 - smoothstep(0.0, uScale.w, q.y);
+  float w = 1.0 - smoothstep(0.0, uScale.w, q.s.x);
   float rho = q.w.x * mix(1.0, uScale.x / uScale.y, w);
   float p = q.w.w * mix(1.0, uScale.x, w);
   vec2 vel = q.w.yz + vec2(uScale.z * w, 0.0);
-  oA = vec4(rho, rho * vel, p / (uGamma - 1.0) + 0.5 * rho * dot(vel, vel));
-  oB = vec4(rho * q.y, 0.0, 0.0, 0.0);
+  oA = vec4(rho, rho * vel, p * q.s.z + 0.5 * rho * dot(vel, vel));
+  oB = vec4(rho * q.s.x, rho * q.s.y, q.s.z, B.w);
+}
+`;
+
+// ---------------------------------------------------------------------------
+// Viscous, wall and afterburning split step. Three small passes:
+//   1. per-cell velocity gradients, effective viscosity and enthalpy
+//   2. viscous face fluxes (one program per direction)
+//   3. update with those fluxes, wall shear / heat transfer and combustion
+// ---------------------------------------------------------------------------
+const GLSL_GAS = `
+uniform vec4 uGas;        // (R_air, R_exhaust, T_REF, muK)
+float sutherland(float TK) { return uGas.w * 1.458e-6 * TK * sqrt(TK) / (TK + 110.4); }
+`;
+const FS_VCELL = GLSL_COMMON + GLSL_GAS + `
+uniform sampler2D uW; uniform sampler2D uWb;
+uniform sampler2D uGeoM;   // .w = turbulence length scale (cells)
+uniform sampler2D uStep;
+layout(location = 0) out vec4 oT1;
+layout(location = 1) out vec4 oT2;
+void main() {
+  ivec2 ij = ivec2(gl_FragCoord.xy), c = ij + 2;
+  vec4 w0 = texelFetch(uW, c, 0);
+  oT1 = vec4(0.0); oT2 = vec4(0.0);
+  if (w0.x < 0.0) return;
+  vec4 wE = texelFetch(uW, c + ivec2(1, 0), 0), wW = texelFetch(uW, c - ivec2(1, 0), 0);
+  vec4 wN = texelFetch(uW, c + ivec2(0, 1), 0), wS = texelFetch(uW, c - ivec2(0, 1), 0);
+  // central differences, one-sided next to a wall (the wall model supplies the wall stress)
+  float fE = wE.x < 0.0 ? 0.0 : 1.0, fW = wW.x < 0.0 ? 0.0 : 1.0, fN = wN.x < 0.0 ? 0.0 : 1.0, fS = wS.x < 0.0 ? 0.0 : 1.0;
+  vec2 gx = (fE * (wE.yz - w0.yz) + fW * (w0.yz - wW.yz)) / max(fE + fW, 1.0);
+  vec2 gr = (fN * (wN.yz - w0.yz) + fS * (w0.yz - wS.yz)) / max(fN + fS, 1.0);
+  float ux = gx.x, vx = gx.y, ur = gr.x, vr = gr.y;
+  float r = float(ij.y) + 0.5, vor = w0.z / r;
+  float div = ux + vr + vor;
+  float S2 = 2.0 * (ux * ux + vr * vr + vor * vor) + (ur + vx) * (ur + vx) - 0.6666667 * div * div;
+  float om = vx - ur;
+  float sens = om * om / (om * om + div * div + 1e-8);   // Ducros sensor: shocks are not turbulence
+  float Smag = sqrt(max(S2, 0.0)) * sens;
+  vec3 sc = texelFetch(uWb, c, 0).xyz;
+  float rho = w0.x, p = w0.w;
+  float Rm = mix(uGas.x, uGas.y, sc.x);
+  float mu = sutherland(p / (rho * Rm) * uGas.z);
+  float l = texelFetch(uGeoM, ij, 0).w;
+  float dt = texelFetch(uStep, ivec2(0), 0).x;
+  float mut = rho * l * l * Smag;
+  oT1 = vec4(ux, ur, vx, vr);
+  oT2 = vec4(min(mu + mut, 0.08 * rho / max(dt, 1e-9)), (sc.z + 1.0) * p / rho, Smag, mu);
+}
+`;
+function makeViscFluxShader(dirR) { return GLSL_COMMON + `
+#define DIR_R ${dirR ? 1 : 0}
+uniform sampler2D uGeoA;
+uniform sampler2D uW; uniform sampler2D uWb;
+uniform sampler2D uT1; uniform sampler2D uT2;
+layout(location = 0) out vec4 oF;
+layout(location = 1) out vec4 oFY;
+const float PR_INV = 1.25;     // 1 / 0.8 (effective Prandtl and Schmidt numbers)
+void main() {
+  ivec2 ij = ivec2(gl_FragCoord.xy);
+  oF = vec4(0.0); oFY = vec4(0.0);
+  vec4 geo = texelFetch(uGeoA, ij, 0);
+#if DIR_R
+  if (geo.w == 0.0 || ij.y == 0 || ij.y >= uN.y) return;
+  ivec2 k1 = ij - ivec2(0, 1);
+#else
+  if (geo.z == 0.0 || ij.x == 0 || ij.x >= uN.x) return;
+  ivec2 k1 = ij - ivec2(1, 0);
+#endif
+  vec4 w1 = texelFetch(uW, k1 + 2, 0), w2 = texelFetch(uW, ij + 2, 0);
+  if (w1.x < 0.0 || w2.x < 0.0) return;
+  vec4 t1 = texelFetch(uT1, k1, 0), t2 = texelFetch(uT1, ij, 0);
+  vec4 m1 = texelFetch(uT2, k1, 0), m2 = texelFetch(uT2, ij, 0);
+  vec3 s1 = texelFetch(uWb, k1 + 2, 0).xyz, s2 = texelFetch(uWb, ij + 2, 0).xyz;
+  float mu = 0.5 * (m1.x + m2.x);
+  float uf = 0.5 * (w1.y + w2.y), vf = 0.5 * (w1.z + w2.z);
+  vec4 tt = 0.5 * (t1 + t2);
+#if DIR_R
+  float r = max(float(ij.y), 0.5);
+  float ux = tt.x, vx = tt.z, ur = w2.y - w1.y, vr = w2.z - w1.z;
+#else
+  float r = float(ij.y) + 0.5;
+  float ux = w2.y - w1.y, vx = w2.z - w1.z, ur = tt.y, vr = tt.w;
+#endif
+  float div = ux + vr + vf / r;
+  float txr = mu * (ur + vx);
+  float k = mu * PR_INV;
+#if DIR_R
+  float trr = mu * (2.0 * vr - 0.6666667 * div);
+  oF = vec4(0.0, -txr, -trr, -(uf * txr + vf * trr) - k * (m2.y - m1.y));
+#else
+  float txx = mu * (2.0 * ux - 0.6666667 * div);
+  oF = vec4(0.0, -txx, -txr, -(uf * txx + vf * txr) - k * (m2.y - m1.y));
+#endif
+  oFY = vec4(-k * (s2 - s1), 0.0);
+}
+`; }
+const FS_VFLUX_X = makeViscFluxShader(false);
+const FS_VFLUX_R = makeViscFluxShader(true);
+const FS_SOURCE = GLSL_COMMON + GLSL_GAS + `
+uniform sampler2D uA; uniform sampler2D uB;
+uniform sampler2D uFxA; uniform sampler2D uFxB;
+uniform sampler2D uFrA; uniform sampler2D uFrB;
+uniform sampler2D uGeoA; uniform sampler2D uGeoG; uniform sampler2D uGeoM;
+uniform sampler2D uStep;
+uniform sampler2D uT1; uniform sampler2D uT2;
+uniform sampler2D uW;     // padded primitives, for the separation test
+uniform vec2 uPhys;       // (viscosity on, afterburning on)
+uniform vec4 uChem;       // (heat per unit exhaust, air per unit exhaust, kinetic rate constant, ambient pressure)
+uniform float uTw;        // wall temperature (normalised)
+uniform vec4 uAmbCons; uniform vec4 uAmbB; uniform vec2 uGamR;
+layout(location = 0) out vec4 oA;
+layout(location = 1) out vec4 oB;
+void memberFlux(ivec2 c, inout vec4 L, inout vec4 LY) {
+  vec4 g = texelFetch(uGeoA, c, 0);
+  float aw = abs(g.z), ae = abs(texelFetch(uGeoA, c + ivec2(1, 0), 0).z);
+  float as_ = abs(g.w), an = abs(texelFetch(uGeoA, c + ivec2(0, 1), 0).w);
+  L  -= ae * texelFetch(uFxA, c + ivec2(1, 0), 0) - aw * texelFetch(uFxA, c, 0);
+  L  -= an * texelFetch(uFrA, c + ivec2(0, 1), 0) - as_ * texelFetch(uFrA, c, 0);
+  LY -= ae * texelFetch(uFxB, c + ivec2(1, 0), 0) - aw * texelFetch(uFxB, c, 0);
+  LY -= an * texelFetch(uFrB, c + ivec2(0, 1), 0) - as_ * texelFetch(uFrB, c, 0);
+}
+void main() {
+  ivec2 ij = ivec2(gl_FragCoord.xy);
+  if (solidAt(ij)) { oA = uAmbCons; oB = uAmbB; return; }
+  ivec2 H = ij + ivec2(round(texelFetch(uGeoM, ij, 0).xy));
+  vec4 gg = texelFetch(uGeoG, ij, 0);    // group (V, Am, Wx, Wr)
+  vec4 A = texelFetch(uA, H, 0), B = texelFetch(uB, H, 0);
+  Prim q = toPrim(A, B);
+  float rho = q.w.x, p = q.w.w, G = q.s.z;
+  vec2 vel = q.w.yz;
+  float dt = texelFetch(uStep, ivec2(0), 0).x;
+  float V = max(gg.x, 1e-6);
+  float Rm = mix(uGas.x, uGas.y, q.s.x), Tg = p / (rho * Rm);
+  vec4 L = vec4(0.0), LY = vec4(0.0);
+  vec4 T1 = texelFetch(uT1, H, 0), T2 = texelFetch(uT2, H, 0);
+  if (uPhys.x > 0.5) {
+    memberFlux(H, L, LY);
+    int sm = int(round(texelFetch(uGeoM, H, 0).z));
+    if ((sm & 1) != 0) memberFlux(H + ivec2(-1, 0), L, LY);
+    if ((sm & 2) != 0) memberFlux(H + ivec2(1, 0), L, LY);
+    if ((sm & 4) != 0) memberFlux(H + ivec2(0, -1), L, LY);
+    if ((sm & 8) != 0) memberFlux(H + ivec2(0, 1), L, LY);
+    // axisymmetric hoop stress
+    float r = V / max(gg.y, 1e-6), vor = vel.y / r;
+    L.z -= T2.x * (2.0 * vor - 0.6666667 * (T1.x + T1.w + vor)) * gg.y;
+    // wall model: Werner-Wengle shear at reference-temperature properties, Reynolds-analogy heat flux
+    float wl = length(gg.zw);
+    if (wl > 1e-6) {
+      vec2 n = gg.zw / wl, ut = vel - dot(vel, n) * n;
+      float up = length(ut);
+      float cp = Rm * (G + 1.0);
+      float Taw = Tg + 0.89 * up * up / (2.0 * cp);
+      float Ts = max(Tg + 0.5 * (uTw - Tg) + 0.22 * (Taw - Tg), 1e-3);
+      float rs = p / (Rm * Ts), mus = sutherland(Ts * uGas.z);
+      float dz = 2.0 * clamp(0.5 * V / wl, 0.25, 1.0);
+      float nz = mus / (rs * dz);
+      float tw = up <= 69.7 * nz ? 2.0 * mus * up / dz
+                                 : rs * pow(7.187 * pow(nz, 1.142857) + 0.13769 * pow(nz, 0.142857) * up, 1.75);
+      tw = min(tw, 0.3 * rho * up * V / max(wl * dt, 1e-9));
+      if (up > 1e-6) L.yz -= tw * wl * ut / up;
+      float qw = tw / max(up, 1e-4) * cp * (Taw - uTw) * 1.24;
+      float qmax = 0.3 * p * G * V / max(wl * dt, 1e-9);
+      L.w -= clamp(qw, -qmax, qmax) * wl;
+    }
+    // Shock / boundary-layer interaction. The subsonic part of the boundary layer is far
+    // thinner than a cell, so the shock's upstream influence is modelled: where the pressure
+    // just downstream exceeds the turbulent plateau rise p2/p1 = 1 + M/2 (Zukoski 1967), the
+    // boundary-layer band loses its momentum. The adverse pressure gradient then drives the
+    // reversed flow, and the separated region itself is computed.
+    if ((sm & 16) != 0) {
+      float up = length(vel), Mn = up / sqrt((1.0 + 1.0 / G) * p / rho);
+      if (Mn > 1.0) {
+        vec2 sh = vel / up;
+        float pd = 0.0;
+        for (int n = 4; n <= 6; n += 2) for (int m = 0; m <= 1; m++) {
+          ivec2 D = H + ivec2(int(round(float(n) * sh.x)), int(floor(float(n) * sh.y)) + m);
+          vec4 wd = texelFetch(uW, clamp(D, ivec2(0), uN - 1) + 2, 0);
+          if (wd.x > 0.0) pd = max(pd, wd.w);   // wall cells are flagged rho < 0
+        }
+        float crit = 1.0 + 0.5 * Mn;
+        L.yz -= smoothstep(crit, 1.2 * crit, pd / p) * V * rho * up * vel;
+      } else if (vel.x > 0.0 && p < 1.3 * uChem.w) {
+        // Past the throat, attached boundary-layer cells are supersonic. A subsonic one near
+        // ambient pressure is inside a separated region: the jet's shear must not re-energise it.
+        L.yz -= 0.5 * V * rho * up * vel;
+      }
+    }
+  }
+  float invV = dt / V;
+  vec4 U = A + invV * L;
+  vec4 UY = B + invV * vec4(LY.xyz, 0.0) / vec4(1.0, 1.0, rho, 1.0);
+  // afterburning: mixing-limited, with a finite-rate limit at low T or p
+  if (uPhys.y > 0.5) {
+    float Z = q.s.x, F = q.s.y, s = uChem.y;
+    float avail = min(F, max(1.0 - Z - s * (Z - F), 0.0) / s);
+    if (avail > 1e-5) {
+      float TK = Tg * uGas.z;
+      float kin = uChem.z * p * exp(-9000.0 / TK) * (1.0 - smoothstep(2400.0, 2800.0, TK));
+      float burn = avail * min(min(T2.z, kin) * dt, 0.5);
+      UY.y -= rho * burn;
+      U.w += rho * burn * uChem.x;
+    }
+  }
+  float rn = max(U.x, RHO_MIN);
+  vec2 vn = U.yz / rn;
+  if (!(rn < 1e30) || !(vn.x < 1e30 && vn.x > -1e30)) { oA = uAmbCons; oB = uAmbB; return; }
+  float Gn = clamp(UY.z, uGamR.x, uGamR.y);
+  float Zn = clamp(UY.x, 0.0, rn);
+  oA = vec4(rn, rn * vn, max(U.w, P_MIN * Gn + 0.5 * rn * dot(vn, vn)));
+  oB = vec4(Zn, clamp(UY.y, 0.0, Zn), Gn, texelFetch(uB, ij, 0).w);
+}
+`;
+// One row: the near-wall state of each column, for the separation read-out.
+const FS_WALLROW = GLSL_COMMON + `
+uniform sampler2D uA; uniform sampler2D uB; uniform sampler2D uJw;
+out vec4 o;
+void main() {
+  int i = int(gl_FragCoord.x);
+  ivec2 c = ivec2(i, int(texelFetch(uJw, ivec2(i, 0), 0).r));
+  Prim q = toPrim(texelFetch(uA, c, 0), texelFetch(uB, c, 0));
+  o = vec4(q.w.y, q.w.z, q.w.w, soundSpeed(q));
 }
 `;
 
@@ -407,6 +658,11 @@ class GPUSolver {
     this.progRed2 = this._program(VS_QUAD, FS_REDUCE2);
     this.progStep = this._program(VS_QUAD, FS_STEPINFO);
     this.progRescale = this._program(VS_QUAD, FS_RESCALE);
+    this.progVcell = this._program(VS_QUAD, FS_VCELL);
+    this.progVfluxX = this._program(VS_QUAD, FS_VFLUX_X);
+    this.progVfluxR = this._program(VS_QUAD, FS_VFLUX_R);
+    this.progSource = this._program(VS_QUAD, FS_SOURCE);
+    this.progWallRow = this._program(VS_QUAD, FS_WALLROW);
     const vbo = gl.createBuffer();
     gl.bindBuffer(gl.ARRAY_BUFFER, vbo);
     gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 3, -1, -1, 3]), gl.STATIC_DRAW);
@@ -485,6 +741,10 @@ class GPUSolver {
     this.flux.fboR = F([this.flux.FrA, this.flux.FrB]);
     this.prim = { W: T(Nx + 4, Nr + 4), Wb: T(Nx + 4, Nr + 4) };
     this.prim.fbo = F([this.prim.W, this.prim.Wb]);
+    this.vis = { T1: T(Nx, Nr), T2: T(Nx, Nr) };
+    this.vis.fbo = F([this.vis.T1, this.vis.T2]);
+    this.wallRow = { t: T(Nx, 1), jw: T(Nx, 1) };
+    this.wallRow.fbo = F([this.wallRow.t]);
     // CFL reduction chain: 4x4 blocks per level down to a single texel
     this.red = [];
     let w = Nx, h = Nr;
@@ -518,6 +778,10 @@ class GPUSolver {
     gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, this.Nx, this.Nr, gl.RGBA, gl.FLOAT, geo.geoG);
     gl.bindTexture(gl.TEXTURE_2D, this.geoM);
     gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, this.Nx, this.Nr, gl.RGBA, gl.FLOAT, geo.geoM);
+    if (geo.jWall) {
+      gl.bindTexture(gl.TEXTURE_2D, this.wallRow.jw);
+      gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, this.Nx, 1, gl.RGBA, gl.FLOAT, geo.jWall);
+    }
   }
 
   setState(A, B) {
@@ -549,7 +813,6 @@ class GPUSolver {
     const gl = this.gl;
     gl.useProgram(prog.p);
     if (prog.u.uN) gl.uniform2i(prog.u.uN, this.Nx, this.Nr);
-    if (prog.u.uGamma) gl.uniform1f(prog.u.uGamma, P.gamma);
   }
 
   // P = normalised parameters (see app.js: simParams())
@@ -561,7 +824,7 @@ class GPUSolver {
       const S0 = this.S[this.cur], S1 = this.S[(this.cur + 1) % 3], S2 = this.S[(this.cur + 2) % 3];
       // ---- CFL reduction -> step info
       let pr = this.progRed1; this._common(pr, P);
-      this._bindTex(pr, 'uA', S0.A, 0); this._bindTex(pr, 'uMask', this.mask, 1);
+      this._bindTex(pr, 'uA', S0.A, 0); this._bindTex(pr, 'uMask', this.mask, 1); this._bindTex(pr, 'uB', S0.B, 2);
       this._draw(this.red[0].fbo, this.red[0].w, this.red[0].h);
       pr = this.progRed2; gl.useProgram(pr.p);
       for (let l = 1; l < this.red.length; l++) {
@@ -582,6 +845,10 @@ class GPUSolver {
       this._fluxPass(S1, stepTex, 2, P);
       this._updatePass(S1, S0, stepTex, 2, S2, P);
       this.cur = (this.cur + 2) % 3;
+      if (P.visc || P.chem) {
+        this._physicsPass(this.S[this.cur], stepTex, this.S[(this.cur + 1) % 3], P);
+        this.cur = (this.cur + 1) % 3;
+      }
       this.stepCount++;
       gl.flush();          // keep GPU command batches small (avoids driver watchdog resets)
     }
@@ -598,6 +865,7 @@ class GPUSolver {
     gl.uniform1i(pp.u.uTimeSel, timeSel);
     gl.uniform4fv(pp.u.uAmb, P.amb);
     gl.uniform3fv(pp.u.uRes, P.res);
+    gl.uniform4fv(pp.u.uInlet, P.inlet);
     gl.uniform1f(pp.u.uPambStart, P.pStart);
     gl.uniform1f(pp.u.uRamp, P.ramp);
     gl.uniform1f(pp.u.uRcCells, P.RcCells);
@@ -624,8 +892,64 @@ class GPUSolver {
     this._bindTex(pr, 'uGeoA', this.geoA, 10); this._bindTex(pr, 'uGeoG', this.geoG, 11); this._bindTex(pr, 'uGeoM', this.geoM, 12);
     gl.uniform1i(pr.u.uStage, stage);
     gl.uniform4fv(pr.u.uAmbCons, P.ambCons);
+    gl.uniform4fv(pr.u.uAmbB, P.ambB);
+    gl.uniform2fv(pr.u.uGamR, P.gamR);
+    gl.uniform3f(pr.u.uBar, P.inlet[0], 1.6 * P.uInlet0, Math.max(P.ramp, 0));
     gl.uniform1f(pr.u.uVmax, P.vMax);
     this._draw(out.fbo, this.Nx, this.Nr);
+  }
+
+  // Viscous + wall + afterburning split step, applied after the RK2 update.
+  // The gradients come from the primitive field of the second RK stage.
+  _physicsPass(S, stepTex, out, P) {
+    const gl = this.gl;
+    let pr = this.progVcell;
+    this._common(pr, P);
+    this._bindTex(pr, 'uW', this.prim.W, 0); this._bindTex(pr, 'uWb', this.prim.Wb, 1);
+    this._bindTex(pr, 'uGeoM', this.geoM, 2); this._bindTex(pr, 'uStep', stepTex, 3);
+    gl.uniform4fv(pr.u.uGas, P.gas);
+    this._draw(this.vis.fbo, this.Nx, this.Nr);
+    if (P.visc) {
+      for (const dirR of [false, true]) {
+        pr = dirR ? this.progVfluxR : this.progVfluxX;
+        this._common(pr, P);
+        this._bindTex(pr, 'uW', this.prim.W, 0); this._bindTex(pr, 'uWb', this.prim.Wb, 1);
+        this._bindTex(pr, 'uGeoA', this.geoA, 2);
+        this._bindTex(pr, 'uT1', this.vis.T1, 3); this._bindTex(pr, 'uT2', this.vis.T2, 4);
+        if (dirR) this._draw(this.flux.fboR, this.Nx, this.Nr + 1);
+        else this._draw(this.flux.fboX, this.Nx + 1, this.Nr);
+      }
+    }
+    pr = this.progSource;
+    this._common(pr, P);
+    this._bindTex(pr, 'uA', S.A, 0); this._bindTex(pr, 'uB', S.B, 1);
+    this._bindTex(pr, 'uFxA', this.flux.FxA, 2); this._bindTex(pr, 'uFxB', this.flux.FxB, 3);
+    this._bindTex(pr, 'uFrA', this.flux.FrA, 4); this._bindTex(pr, 'uFrB', this.flux.FrB, 5);
+    this._bindTex(pr, 'uGeoA', this.geoA, 6); this._bindTex(pr, 'uGeoG', this.geoG, 7); this._bindTex(pr, 'uGeoM', this.geoM, 8);
+    this._bindTex(pr, 'uStep', stepTex, 9); this._bindTex(pr, 'uMask', this.mask, 10);
+    this._bindTex(pr, 'uT1', this.vis.T1, 11); this._bindTex(pr, 'uT2', this.vis.T2, 12);
+    this._bindTex(pr, 'uW', this.prim.W, 13);
+    gl.uniform4fv(pr.u.uGas, P.gas);
+    gl.uniform2f(pr.u.uPhys, P.visc ? 1 : 0, P.chem ? 1 : 0);
+    gl.uniform4fv(pr.u.uChem, P.chemK);
+    gl.uniform1f(pr.u.uTw, P.Tw);
+    gl.uniform4fv(pr.u.uAmbCons, P.ambCons);
+    gl.uniform4fv(pr.u.uAmbB, P.ambB);
+    gl.uniform2fv(pr.u.uGamR, P.gamR);
+    this._draw(out.fbo, this.Nx, this.Nr);
+  }
+
+  // near-wall row for the separation read-out (draws into a 1-row texture)
+  drawWallRow() {
+    const gl = this.gl, pr = this.progWallRow;
+    gl.bindVertexArray(this.vao);
+    gl.useProgram(pr.p);
+    gl.uniform2i(pr.u.uN, this.Nx, this.Nr);
+    this._bindTex(pr, 'uA', this.state.A, 0); this._bindTex(pr, 'uB', this.state.B, 1);
+    this._bindTex(pr, 'uJw', this.wallRow.jw, 2); this._bindTex(pr, 'uMask', this.mask, 3);
+    this._draw(this.wallRow.fbo, this.Nx, 1);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    return this.wallRow.t;
   }
 
   rescaleAmbient(fp, fT, du, P) {
@@ -636,6 +960,7 @@ class GPUSolver {
     this._bindTex(pr, 'uA', S0.A, 0); this._bindTex(pr, 'uB', S0.B, 1); this._bindTex(pr, 'uMask', this.mask, 2);
     gl.uniform4f(pr.u.uScale, fp, fT, du, 0.03);
     gl.uniform4fv(pr.u.uAmbCons, P.ambCons);
+    gl.uniform4fv(pr.u.uAmbB, P.ambB);
     this._draw(S1.fbo, this.Nx, this.Nr);
     this.cur = (this.cur + 1) % 3;
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);

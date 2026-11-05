@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Plume Lab — Rocket Nozzle Flow Simulator</title>
+<title>Rocket Nozzle CFD Solver</title>
 <style>
 :root {
   --bg: #06070b; --bg2: #0b0d13; --panel: #0d1017; --line: #1b2030; --line2: #262c3f;
@@ -109,7 +109,7 @@ table.th tr.head td { color: var(--dimmer); font-size: 10px; letter-spacing: .14
 <div id="app">
   <div id="stage">
     <div id="topbar">
-      <div id="brand">PLUME<b>LAB</b></div>
+      <div id="brand">ROCKET NOZZLE <b>CFD SOLVER</b></div>
       <div id="tabs"></div>
     </div>
     <div id="viewport">
@@ -140,7 +140,7 @@ table.th tr.head td { color: var(--dimmer); font-size: 10px; letter-spacing: .14
       <button class="btn rec" id="b-rec" title="V">● Record</button>
       <button class="btn" id="b-shot" title="S">Screenshot</button>
       <button class="btn" id="b-panel" title="H">Panel</button>
-      <div id="footer">2D axisymmetric · inviscid Euler · frozen-γ · HLLC / MUSCL · GPU</div>
+      <div id="footer">2D axisymmetric · Navier-Stokes · two-gas · HLLC / MUSCL · GPU</div>
     </div>
   </div>
   <div id="panel">

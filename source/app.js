@@ -13,7 +13,8 @@ const S = {
   preset: 'demo', prop: 'kerolox',
   Dt: 23, De: 119, type: 'bell', bellPct: 80, coneAngle: 15, CR: 6, chamberLen: 1.6,
   base: false, bodyRatio: 1.5,
-  Pc: 196, throttle: 100, Tc: 3670, Mw: 22, gamma: 1.22,
+  Pc: 196, throttle: 100, Tc: 3670, Mw: 22, gamma: 1.22, qAb: 6.8, sAir: 1.8,
+  viscous: true, afterburn: true, Tw: 800, inletAbsorb: 100, minCells: 8,
   alt: 0, mach: 0,
   ascent: false, ascentTop: 35, ascentDur: 40, ascentMachTop: 3.0, ascentMach: true, throttleSweep: false,
   res: 1024, domainL: 1.2, aspect: 0.28, startMode: 'ramp', rampMs: 0.12, cfl: 0.6, order2: true, wallModel: 'cut',
@@ -47,7 +48,13 @@ const CONTROLS = [
     { key: 'throttle', label: 'Throttle', min: 10, max: 120, step: 1, unit: '%', kind: 'live', d: 0 },
     { key: 'Tc', label: 'Chamber temperature', min: 200, max: 4200, step: 10, unit: 'K', kind: 'live', d: 0 },
     { key: 'Mw', label: 'Exhaust molar mass', min: 2, max: 44, step: 0.5, unit: 'kg/kmol', kind: 'live', d: 1 },
-    { key: 'gamma', label: 'Ratio of specific heats γ', min: 1.1, max: 1.67, step: 0.01, unit: '', kind: 'reset', d: 2, hint: () => 'Changing γ restarts the run' },
+    { key: 'gamma', label: 'Ratio of specific heats γ', min: 1.1, max: 1.67, step: 0.01, unit: '', kind: 'reset', d: 2, hint: () => 'Exhaust γ; air stays at 1.40 and mixtures fall between. Changing it restarts the run' },
+    { key: 'qAb', label: 'Afterburn energy', min: 0, max: 16, step: 0.1, unit: 'MJ/kg', kind: 'live', d: 1, hint: () => 'Heat from burning the exhaust\'s CO and H₂ in air, per kg of exhaust' },
+  ] },
+  { section: 'Viscous & reacting flow', open: true, items: [
+    { key: 'viscous', label: 'Viscosity, turbulence & boundary layers', type: 'toggle', kind: 'live2' },
+    { key: 'Tw', label: 'Nozzle wall temperature', min: 300, max: 2000, step: 10, unit: 'K', kind: 'live', d: 0, show: () => S.viscous, hint: () => 'Sets the heat lost to the wall. Regeneratively cooled walls run near 800 K' },
+    { key: 'afterburn', label: 'Afterburning in the plume', type: 'toggle', kind: 'live2' },
   ] },
   { section: 'Flight & environment', open: true, items: [
     { key: 'alt', label: 'Altitude', min: 0, max: 45, step: 0.1, unit: 'km', kind: 'live', d: 1, hint: () => { const a = atmosphere(S.alt * 1000); return `Ambient ${fmt(a.p / 1000, a.p < 1000 ? 3 : 1)} kPa · ${fmt(a.T, 0)} K`; } },
@@ -73,11 +80,13 @@ const CONTROLS = [
     { key: 'flameGain', label: 'Flame brightness', min: 0.2, max: 3, step: 0.05, unit: '', kind: 'view', d: 2, show: () => S.field === 'flame' },
   ] },
   { section: 'Simulation', open: false, items: [
-    { key: 'res', label: 'Grid resolution', type: 'select', options: RES_OPTIONS, kind: 'reset', hint: () => setup ? `Δx = ${fmt(setup.dx * 1000, 2)} mm · throat radius = ${fmt(setup.resolution.throatCells, 1)} cells` + (setup.resolution.throatCells < 7 ? '  ⚠ throat under-resolved' : '') : '' },
+    { key: 'res', label: 'Grid resolution', type: 'select', options: RES_OPTIONS, kind: 'reset', hint: () => setup ? `Δx = ${fmt(setup.dx * 1000, 2)} mm · throat radius = ${fmt(setup.resolution.throatCells, 1)} cells` + (setup.resolution.throatCells < S.minCells - 0.01 ? '  ⚠ throat under-resolved: raise the grid' : '') : '' },
+    { key: 'minCells', label: 'Minimum cells across throat radius', min: 4, max: 24, step: 1, unit: 'cells', kind: 'reset', d: 0, hint: () => 'The domain shortens if needed to keep this. Raise the grid to see more plume' },
     { key: 'domainL', label: 'Domain length', min: 0.1, max: 8, step: 0.05, unit: 'm', kind: 'reset', d: 2, hint: () => {
       if (!setup) return '';
       const L = setup.Nx * setup.dx, f = setup.contour.xe / L, rf = setup.contour.Re / (setup.Nr * setup.dx);
       let h = `Actual ${fmt(L, 2)} m × ${fmt(setup.Nr * setup.dx, 2)} m (snapped to the throat)`;
+      if (setup.resolution.shortened) h += '  · shortened to keep the throat resolved';
       if (f > 0.6) h += '  ⚠ engine fills most of the domain: increase length or use Fit';
       else if (rf > 0.45) h += '  ⚠ nozzle exit is close to the top boundary: increase length';
       return h; } },
@@ -85,6 +94,7 @@ const CONTROLS = [
     { key: 'wallModel', label: 'Wall model', type: 'seg', options: [['cut', 'Cut-cell (smooth)'], ['stair', 'Stepped']], kind: 'reset', hint: () => 'Cut-cell walls follow the true nozzle contour' },
     { key: 'startMode', label: 'Start-up', type: 'seg', options: [['ramp', 'Ignition ramp'], ['burst', 'Diaphragm burst']], kind: 'next' },
     { key: 'rampMs', label: 'Ignition ramp time', min: 0.01, max: 3, step: 0.01, unit: 'ms', kind: 'next', d: 2, show: () => S.startMode === 'ramp' },
+    { key: 'inletAbsorb', label: 'Chamber acoustic damping', min: 0, max: 100, step: 5, unit: '%', kind: 'live2', d: 0, hint: () => '100 % absorbs chamber sound at the injector face so Pc settles at once. 0 % lets the chamber ring' },
     { key: 'cfl', label: 'CFL number', min: 0.2, max: 0.9, step: 0.05, unit: '', kind: 'live2', d: 2 },
     { key: 'order2', label: 'Second-order reconstruction', type: 'toggle', kind: 'live2' },
     { key: '_reset', label: 'Reset all settings to defaults', type: 'button', action: () => { try { localStorage.removeItem(STORE_KEY); } catch (e) {} applyPreset('demo'); } },
@@ -176,6 +186,7 @@ function cfgFromS() {
     CR: S.CR, chamberLen: S.chamberLen, Pc: S.Pc * 1e5 * S.throttle / 100, Tc: S.Tc, gamma: S.gamma, Mw: S.Mw,
     alt: S.alt * 1000, mach: S.mach, base: S.base, bodyRatio: S.bodyRatio, domainL: S.domainL, Nx: S.res,
     aspect: S.aspect, startMode: S.startMode, rampMs: S.rampMs, cfl: S.cfl, order2: S.order2, wallModel: S.wallModel,
+    minCells: S.minCells, viscous: S.viscous, afterburn: S.afterburn, qAb: S.qAb, sAir: S.sAir, Tw: S.Tw, inletAbsorb: S.inletAbsorb / 100,
   };
 }
 function liveTargets() {
@@ -204,7 +215,7 @@ function restart() {
   pStartSi = setup.atm.p;
   live = liveTargets();
   P = setup.P;
-  stepsTotal = 0; simTime = 0; perf = null; chamber = null; lastReadT = -1; axisData = null; readGen++; probeData = null; budget = Math.max(2, Math.min(budget, 6));
+  stepsTotal = 0; simTime = 0; perf = null; chamber = null; lastReadT = -1; axisData = null; sep = null; sepHold = 0; readGen++; probeData = null; budget = Math.max(2, Math.min(budget, 6));
   if (gridChanged || !view.fitted) fitView();
   refreshHints();
 }
@@ -220,6 +231,9 @@ function remesh() {
     setup = ns;
     solver.setGeometry(setup.geo);
     refreshHints();
+    // a smaller throat can drop below the minimum: re-grid once dragging has stopped
+    clearTimeout(resetTimer);
+    if (ns.resolution.throatCells < S.minCells - 0.01) resetTimer = setTimeout(restart, 800);
   }, 40);
 }
 let resetTimer = null;
@@ -311,7 +325,7 @@ function displayRange(field = S.field) {
   const pa = atmosphere(live ? live.alt : S.alt * 1000).p;
   const Pc = live ? live.Pc : S.Pc * 1e5;
   switch (field) {
-    case 'temp': return { r: [Math.min(0.75 * t.Te, 0.9 * Ta), 1.04 * Math.max(Tc, Ta)], unit: 'K', d: 0 };
+    case 'temp': return { r: [Math.min(0.75 * t.Te, 0.9 * Ta), 1.04 * Math.max(Tc, Ta, P && P.chem ? 2700 : 0)], unit: 'K', d: 0 };
     case 'mach': return { r: [0, Math.max(1.5, t.Me * 1.3 + S.mach)], unit: '', d: 1 };
     case 'pres': { const lo = Math.log10(Math.max(Math.min(t.pe, pa) * 0.08, 1)); return { r: [lo, Math.log10(Pc * 1.05)], unit: 'Pa', log: true, d: 0 }; }
     case 'dens': { const R = RU / S.Mw; const rc = Pc / (R * Tc); const re = t.pe / (R * t.Te); const ra = pa / (R_AIR * Ta);
@@ -319,6 +333,8 @@ function displayRange(field = S.field) {
     case 'vel': return { r: [0, Math.max(t.uLim * 0.95, 1) + S.mach * 340], unit: 'm/s', d: 0 };
     case 'vort': return { r: [0, t.uLim / Math.max(t.At ** 0.5, 1e-3) * 0.6], unit: '1/s', d: 0, logish: true };
     case 'exh': return { r: [0, 1], unit: '', d: 2 };
+    case 'turb': return { r: [0, 4], unit: '', d: 0 };
+    case 'burn': return { r: [0, 1], unit: '', d: 2 };
     default: return { r: [0, 1], unit: '', d: 1 };
   }
 }
@@ -326,7 +342,7 @@ function V() {
   const dr = displayRange();
   const split = S.split && S.mirror;
   return {
-    gamma: S.gamma, fieldIndex: fieldIndex(), range: dr.r, ReN: P.ReN, RaN: P.RaN,
+    fieldIndex: fieldIndex(), range: dr.r, ReN: P.ReN, RaN: P.RaN,
     split, fieldIndex2: FIELDS.findIndex(f => f.id === S.field2), range2: displayRange(S.field2).r,
     Tc: live.Tc, Ta: P.Ta, schlGain: S.schlGain, dx: setup.dx,
     view: viewVec(), mirror: S.mirror, sonic: +S.sonic, bg: (S.field === 'flame' || (S.split && S.field2 === 'flame')) ? [0.012, 0.016, 0.035] : [0.02, 0.025, 0.05],
@@ -366,6 +382,8 @@ function drawColorbar(field, bx, by, bw, dpr, tag) {
   else if (field === 'flame') { lo = 'cold'; hi = 'hot exhaust'; }
   else if (field === 'exh') { lo = 'ambient air'; hi = 'pure exhaust'; }
   else if (field === 'vort') { lo = '0'; hi = 'strong shear'; }
+  else if (field === 'turb') { lo = 'laminar'; hi = '10,000 × laminar'; }
+  else if (field === 'burn') { lo = 'unburnt'; hi = 'fully burnt'; }
   else { lo = lab(dr.r[0]); hi = lab(dr.r[1]) + (dr.unit && !dr.log ? ' ' + dr.unit : dr.log && field === 'dens' ? ' kg/m³' : ''); }
   ov.textAlign = 'left'; ov.fillText(name, bx, by - 6 * dpr);
   ov.textBaseline = 'top';
@@ -401,6 +419,17 @@ function drawOverlay() {
       for (let k = c.pts.length - 1; k >= 0; k--) { const [x, r] = c.pts[k]; if (x > xb) continue; p = cellToScreen(x / dx, s * (r + tw * 0.5) / dx, v); ov.lineTo(p[0], p[1]); }
       p = cellToScreen(0, s * (c.Rc + tw * 0.5) / dx, v); ov.lineTo(p[0], p[1]);
       ov.closePath(); ov.fillStyle = '#0b0d13'; ov.fill(); ov.strokeStyle = 'rgba(170,185,210,0.55)'; ov.stroke();
+    }
+  }
+  // separation point on the nozzle wall
+  if (sep) {
+    ov.font = `${10 * dpr}px ${getComputedStyle(document.body).getPropertyValue('--mono')}`;
+    ov.textAlign = 'center'; ov.textBaseline = 'bottom';
+    for (const s of signs) {
+      const R = c.radiusAt(sep.x), p = cellToScreen(sep.x / dx, s * (R + tw) / dx, v), d = 7 * dpr * s;
+      ov.fillStyle = '#ffb547';
+      ov.beginPath(); ov.moveTo(p[0], p[1]); ov.lineTo(p[0] - 5 * dpr, p[1] - d); ov.lineTo(p[0] + 5 * dpr, p[1] - d); ov.closePath(); ov.fill();
+      if (s > 0) ov.fillText('SEPARATION', p[0], p[1] - d - 3 * dpr);
     }
   }
   if (S.centerPlot) drawCenterPlot(v, W, H, dpr);
@@ -464,17 +493,25 @@ function readback() {
   processMeasurements(tPrev, col, ch.A, ch.B);
 }
 let axisData = null;
-function processAxis(row) {
-  const g = S.gamma, n = setup.Nx;
+function processAxis(row, rowB) {
+  const n = setup.Nx;
   const M = new Float32Array(n), pr = new Float32Array(n), solidRow = setup.mask.subarray(0, n);
   for (let i = 0; i < n; i++) {
     const k = i * 4, rho = Math.max(row[k], 1e-9), u = row[k + 1] / rho, v = row[k + 2] / rho;
-    const p = Math.max((g - 1) * (row[k + 3] - 0.5 * rho * (u * u + v * v)), 1e-9);
+    const G = rowB[k + 2], g = 1 + 1 / G;
+    const p = Math.max((row[k + 3] - 0.5 * rho * (u * u + v * v)) / G, 1e-9);
     M[i] = Math.hypot(u, v) / Math.sqrt(g * p / rho); pr[i] = p * P_REF;
   }
   axisData = { M, pr, solidRow };
 }
-function readAxis() { processAxis(solver._readRect(solver.state.A, 0, 0, setup.Nx, 1)); }
+function readAxis() { processAxis(solver._readRect(solver.state.A, 0, 0, setup.Nx, 1), solver._readRect(solver.state.B, 0, 0, setup.Nx, 1)); }
+// Separation read-out: a short hold stops the marker flickering as the shock foot moves.
+let sep = null, sepHold = 0;
+function processWall(row) {
+  const now = wallSeparation(setup, row, atmosphere(live.alt).p);
+  if (now) { sep = sep ? { ...now, x: sep.x + (now.x - sep.x) * 0.2, frac: sep.frac + (now.frac - sep.frac) * 0.2 } : now; sepHold = 12; }
+  else if (--sepHold <= 0) sep = null;
+}
 
 // Non-blocking read-back: one batched request in flight at a time, collected
 // when the GPU signals it is done (no pipeline stalls).
@@ -485,7 +522,8 @@ function asyncReadback() {
     const d = res.data;
     const tPrev = processStepInfo(d.step);
     processMeasurements(tPrev, { A: d.colA, B: d.colB }, d.chA, d.chB);
-    if (d.axis) processAxis(d.axis);
+    if (d.axis) processAxis(d.axis, d.axisB);
+    if (d.wall && S.viscous) processWall(d.wall); else if (!S.viscous) sep = null;
     if (d.prA) probeData = { cell: res.probe, q: cellPrimSI(setup, d.prA, d.prB) };
   }
   if (!solver._async) {
@@ -495,8 +533,9 @@ function asyncReadback() {
       { name: 'colB', tex: st.B, x: setup.iExit, y: 0, w: 1, h: setup.Nr },
       { name: 'chA', tex: st.A, x: setup.iChamber, y: 0, w: 1, h: 1 },
       { name: 'chB', tex: st.B, x: setup.iChamber, y: 0, w: 1, h: 1 },
+      { name: 'wall', tex: solver.drawWallRow(), x: 0, y: 0, w: setup.Nx, h: 1 },
     ];
-    if (S.centerPlot) reqs.push({ name: 'axis', tex: st.A, x: 0, y: 0, w: setup.Nx, h: 1 });
+    if (S.centerPlot) reqs.push({ name: 'axis', tex: st.A, x: 0, y: 0, w: setup.Nx, h: 1 }, { name: 'axisB', tex: st.B, x: 0, y: 0, w: setup.Nx, h: 1 });
     const pc = probeCell;
     if (pc) { reqs.push({ name: 'prA', tex: st.A, x: pc.i, y: pc.j, w: 1, h: 1 }, { name: 'prB', tex: st.B, x: pc.i, y: pc.j, w: 1, h: 1 }); }
     if (solver.requestAsync(reqs, readGen) && pc) solver._async.probe = pc;
@@ -560,7 +599,7 @@ function updateHUD() {
     setMetric('isp', fmt(Math.max(perf.Isp, 0), 0), 's', `ideal ${fmt(t.Isp, 0)} s · vac ${fmt(t.IspVac, 0)} s`);
     const ratio = perf.pe / Math.max(atmosphere(live.alt).p, 1e-9);
     const mstate = atmosphere(live.alt).p < 1 ? 'vacuum' : ratio > 1.08 ? 'under-expanded' : ratio < 0.92 ? 'over-expanded' : 'near-ideal';
-    setMetric('ratio', atmosphere(live.alt).p < 1 ? '∞' : fmt(ratio, ratio < 10 ? 2 : 0), '', `${mstate.toUpperCase()} · theory ${fmt(t.ratio, 2)}` + (t.separation ? ' · sep. risk' : ''));
+    setMetric('ratio', atmosphere(live.alt).p < 1 ? '∞' : fmt(ratio, ratio < 10 ? 2 : 0), '', sep ? `SEPARATED AT ${fmt(sep.frac * 100, 0)} % OF BELL · theory ${fmt(t.ratio, 2)}` : `${mstate.toUpperCase()} · theory ${fmt(t.ratio, 2)}` + (t.separation ? ' · sep. risk' : ''));
   }
 }
 
@@ -573,7 +612,7 @@ function updateTheoryPanel() {
   const [Fi, Fu] = fmtForce(t.F), [Fs, Fsu] = perf ? fmtForce(perf.F) : ['—', ''];
   el.innerHTML = `
     <div style="margin:4px 0 8px"><span class="state ${st}">${t.state.toUpperCase()}</span>
-      ${t.separation ? '<span class="state over" style="margin-left:6px">SEPARATION LIKELY</span>' : ''}</div>
+      ${sep ? '<span class="state over" style="margin-left:6px">FLOW SEPARATED</span>' : t.separation ? '<span class="state over" style="margin-left:6px">SEPARATION LIKELY</span>' : ''}</div>
     <table class="th">
       <tr class="head"><td></td><td class="n">1-D ideal</td><td class="n">simulated</td></tr>
       ${row('Thrust', Fi + ' ' + Fu, perf ? Fs + ' ' + Fsu : '—')}
@@ -583,6 +622,8 @@ function updateTheoryPanel() {
       ${row('Isp', fmt(t.Isp, 0) + ' s', perf ? fmt(perf.Isp, 0) + ' s' : '—')}
       ${row('Chamber pressure', fmt((live ? live.Pc : 0) / 1e5, 1) + ' bar', chamber ? fmt(chamber.p / 1e5, 1) + ' bar' : '—')}
       ${row('Chamber temp.', fmt(live ? live.Tc : 0, 0) + ' K', chamber ? fmt(chamber.T, 0) + ' K' : '—')}
+      ${row('Separation point', (() => { const f = setup ? summerfieldPoint(setup.contour, live ? live.Pc : S.Pc * 1e5, S.gamma, pa) : null; return f === null ? 'attached' : fmt(f * 100, 0) + ' % of bell'; })(), !S.viscous ? 'viscosity off' : sep ? fmt(sep.frac * 100, 0) + ' % of bell' : 'attached')}
+      ${sep ? row('Wall p / pa at separation', '0.40', fmt(sep.pRatio, 2)) : ''}
       <tr class="head"><td colspan="3" style="padding-top:10px">Ideal nozzle numbers</td></tr>
       ${row('Expansion ratio ε', fmt(t.eps, 2))}
       ${row('Optimum ε here', isFinite(t.epsOpt) ? fmt(t.epsOpt, 2) : '∞ (vacuum)')}
@@ -595,8 +636,9 @@ function updateTheoryPanel() {
       ${row('Vacuum thrust', fmtForce(t.Fvac).join(' '))}
       ${row('Ambient pressure', fmt(pa / 1000, pa < 1000 ? 3 : 2) + ' kPa')}
     </table>
-    <p class="note">"Simulated" values are measured at the nozzle exit plane by the solver once the start-up transient has passed (give it ~1 ms of sim time). The 1-D numbers assume uniform, parallel exit flow, so a few % difference is normal: real bells lose a little to divergence, and a coarse grid adds numerical loss.</p>
-    ${t.separation ? '<p class="note warn">Pe &lt; 0.4 Pa (Summerfield criterion): a real engine would likely suffer flow separation inside the bell. This inviscid model has no boundary layer, so it shows the shock pattern but not true separation.</p>' : ''}`;
+    <p class="note">"Simulated" values are measured at the nozzle exit plane by the solver once the start-up transient has passed (give it ~1 ms of sim time). The 1-D numbers assume uniform, parallel, frictionless exit flow, so a few % difference is normal: real bells lose a little to divergence and wall friction, and a coarse grid adds numerical loss. The 1-D separation point uses the Summerfield criterion (wall pressure = 0.4 pa).</p>
+    ${t.separation && !sep && S.viscous ? '<p class="note warn">Pe &lt; 0.4 Pa (Summerfield criterion): a real engine would likely separate here. Give the flow time to settle, or raise the grid: separation forms in the boundary layer, which is only a few cells thick.</p>' : ''}
+    ${t.separation && !S.viscous ? '<p class="note warn">Pe &lt; 0.4 Pa (Summerfield criterion): a real engine would likely separate here, but viscosity is switched off, so this run has no boundary layer to separate.</p>' : ''}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -698,9 +740,9 @@ function composite() {
   });
   c.textAlign = 'left'; c.fillStyle = 'rgba(150,160,180,0.55)'; c.font = `${15 * u}px ${mono}`;
   const footY = portrait || square ? hudY + 130 * u : H - 30 * u;
-  c.fillText('PLUME LAB  ·  ROCKET NOZZLE FLOW', pad, footY);
+  c.fillText('ROCKET NOZZLE CFD SOLVER', pad, footY);
   c.textAlign = 'right';
-  c.fillText('2D axisymmetric · inviscid · frozen-γ', W - pad, footY);
+  c.fillText(`2D axisymmetric · ${S.viscous ? 'Navier-Stokes + turbulence model' : 'inviscid'}${P && P.chem ? ' · afterburning' : ''}`, W - pad, footY);
   return recCanvas;
 }
 function stamp() { const d = new Date(), p = n => String(n).padStart(2, '0'); return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}_${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`; }
@@ -721,7 +763,7 @@ function toggleRecord() {
   recorder.ondataavailable = e => { if (e.data && e.data.size) recChunks.push(e.data); };
   recorder.onstop = () => {
     const ext = (recorder.mimeType || mime).includes('mp4') ? 'mp4' : 'webm';
-    download(new Blob(recChunks, { type: recorder.mimeType || mime }), `plume_${stamp()}.${ext}`);
+    download(new Blob(recChunks, { type: recorder.mimeType || mime }), `nozzle_cfd_${stamp()}.${ext}`);
     recorder = null; $('b-rec').classList.remove('on'); $('b-rec').textContent = '● Record';
   };
   recorder.start(250);
@@ -791,7 +833,7 @@ function frame(now) {
   updateProbe();
   if (recorder || shotPending) {
     const cv = composite();
-    if (shotPending) { shotPending = false; cv.toBlob(b => download(b, `plume_${stamp()}.png`), 'image/png'); }
+    if (shotPending) { shotPending = false; cv.toBlob(b => download(b, `nozzle_cfd_${stamp()}.png`), 'image/png'); }
     if (recorder) $('b-rec').textContent = `■ Stop ${fmt((now - recStart) / 1000, 0)}s`;
   }
   minFrameDt = Math.min(minFrameDt * 1.003, Math.max(dtWall, 0.004));   // info only
@@ -902,15 +944,15 @@ function onChange(it) {
       const p = PROPELLANTS[S.prop];
       if (S.prop !== 'custom') {
         const gChanged = Math.abs(p.gamma - S.gamma) > 1e-9;
-        S.Tc = p.Tc; S.gamma = p.gamma; S.Mw = p.Mw;
-        ['Tc', 'gamma', 'Mw'].forEach(syncControl);
+        S.Tc = p.Tc; S.gamma = p.gamma; S.Mw = p.Mw; S.qAb = p.qAb; S.sAir = p.sAir;
+        ['Tc', 'gamma', 'Mw', 'qAb'].forEach(syncControl);
         if (gChanged) restartSoon();
       }
       break;
     }
     case 'mode': ascentT = 0; sweepT = 0; if (!S.throttleSweep && it.key === 'throttleSweep') { S.throttle = 100; syncControl('throttle'); } break;
   }
-  if (['Tc', 'gamma', 'Mw'].includes(it.key) && S.prop !== 'custom') { S.prop = 'custom'; syncControl('prop'); }
+  if (['Tc', 'gamma', 'Mw', 'qAb'].includes(it.key) && S.prop !== 'custom') { S.prop = 'custom'; syncControl('prop'); }
   if (it.key === 'split' && S.split && !S.mirror) { S.mirror = true; syncControl('mirror'); view.fitted = false; fitView(); }
   if (it.key === 'mirror') { if (!S.mirror && S.split) { S.split = false; syncControl('split'); } view.fitted = false; fitView(); }
   if (it.key === 'cmap') renderer.setColormap(S.cmap);
@@ -921,7 +963,7 @@ function onChange(it) {
 function applyPreset(key) {
   const e = ENGINE_PRESETS[key]; if (!e) return;
   const p = PROPELLANTS[e.prop];
-  Object.assign(S, { preset: key, prop: e.prop, Tc: p.Tc, gamma: p.gamma, Mw: p.Mw, Pc: e.Pc, throttle: 100, Dt: e.Dt, De: e.De,
+  Object.assign(S, { preset: key, prop: e.prop, Tc: p.Tc, gamma: p.gamma, Mw: p.Mw, qAb: p.qAb, sAir: p.sAir, Pc: e.Pc, throttle: 100, Dt: e.Dt, De: e.De,
     type: e.type, bellPct: e.bellPct, coneAngle: e.coneAngle, CR: e.CR, chamberLen: e.chamberLen, alt: e.alt, mach: e.mach,
     base: e.base, domainL: e.domain, ascent: false, throttleSweep: false });
   for (const k in rows) syncControl(k);
@@ -1024,10 +1066,10 @@ function bindEvents() {
 }
 
 const HELP_HTML = `
-<button class="btn primary" style="width:100%;margin:8px 0 4px" onclick="window.plume && window.plume.runSelfTest()">Run self-test (≈ 2 min)</button>
+<button class="btn primary" style="width:100%;margin:8px 0 4px" onclick="window.nozzle && window.nozzle.runSelfTest()">Run self-test (≈ 2 min)</button>
 <p class="note">Runs every preset, view and feature on your GPU, measures speed at each grid size and shows a pass/fail report. Your settings are restored afterwards.</p>
-<p class="note"><b>What you're looking at.</b> The app solves the compressible Euler equations (inviscid gas dynamics) on your GPU for an axisymmetric engine: the chamber, the converging–diverging nozzle and the air around it. Shock diamonds, Mach disks, expansion fans, the start-up vortex ring and the plume's response to altitude all come out of the maths. None of it is drawn by hand.</p>
-<p class="note"><b>Try this:</b> start the <i>Over-expanded</i> preset and pull <b>Altitude</b> up slowly. You'll see the shock pattern stretch and the Mach disk vanish as the jet goes from over- to under-expanded. Or turn on <b>Ascent mode</b> and record it.</p>
+<p class="note"><b>What you're looking at.</b> The app solves the compressible Navier-Stokes equations on your GPU for an axisymmetric engine: the chamber, the converging–diverging nozzle and the air around it. Shock diamonds, Mach disks, boundary layers, flow separation, afterburning and the plume's response to altitude all come out of the maths. None of it is drawn by hand.</p>
+<p class="note"><b>Try this:</b> start the <i>Over-expanded</i> preset and watch for the amber <b>separation</b> marker on the nozzle wall. Pull <b>Altitude</b> up slowly and it moves out of the bell as the jet goes from over- to under-expanded. Or turn on <b>Ascent mode</b> and record it.</p>
 <p class="note"><b>Mouse:</b> hover for local values · scroll to zoom · drag to pan · double-click to reset view.</p>
 <table class="th">
 <tr><td><span class="kbd">Space</span></td><td class="n">play / pause</td></tr>
@@ -1042,7 +1084,7 @@ const HELP_HTML = `
 <tr><td><span class="kbd">H</span></td><td class="n">hide panel</td></tr>
 <tr><td><span class="kbd">Shift</span>+<span class="kbd">T</span></td><td class="n">run self-test</td></tr>
 </table>
-<p class="note"><b>Limits (by design):</b> no viscosity or turbulence (so no boundary layers or true flow separation), no combustion or afterburning in the plume, and a single frozen γ for both exhaust and air. Walls use a cut-cell method that follows the true contour; results still sharpen with grid resolution. Treat the numbers as good engineering estimates for animation, not design data.</p>
+<p class="note"><b>Limits:</b> the flow is 2-D axisymmetric, so turbulence is modelled rather than fully resolved. Boundary layers are only a few cells thick and rely on a wall model. Afterburning is one global reaction. γ changes with the gas mixture but not with temperature. Results still sharpen with grid resolution. Treat the numbers as good engineering estimates for animation, not design data.</p>
 <p class="note"><b>Speed:</b> if it's sluggish, lower the grid resolution or the speed slider. On laptops with two GPUs, make Windows run your browser on the NVIDIA card: Settings → System → Display → Graphics → your browser → High performance.</p>
 `;
 
@@ -1062,7 +1104,7 @@ async function runSelfTest() {
   const box = document.createElement('div');
   box.style.cssText = 'position:fixed;right:16px;top:16px;width:520px;max-height:calc(100vh - 32px);overflow:auto;z-index:50;background:rgba(8,10,16,.96);border:1px solid #3fd0ff;border-radius:8px;padding:14px 16px;font:12px/1.55 var(--mono);color:#c9d0de;white-space:pre-wrap';
   document.body.appendChild(box);
-  const head = () => `PLUME LAB SELF-TEST   ✓ ${pass}   ✗ ${fail}   ! ${warn}\n` + '─'.repeat(56) + '\n';
+  const head = () => `ROCKET NOZZLE CFD SOLVER SELF-TEST   ✓ ${pass}   ✗ ${fail}   ! ${warn}\n` + '─'.repeat(56) + '\n';
   const render = (extra = '') => { box.textContent = head() + lines.join('\n') + (extra ? '\n\n' + extra : ''); box.scrollTop = box.scrollHeight; };
   const log = (status, msg) => { if (status === 'PASS') pass++; else if (status === 'FAIL') fail++; else if (status === 'WARN') warn++; lines.push(`${status === 'PASS' ? '✓' : status === 'FAIL' ? '✗' : status === 'WARN' ? '!' : '·'} ${msg}`); render(); };
   const glErr = () => { const e = gl.getError(); return e === gl.NO_ERROR ? '' : 'GL error 0x' + e.toString(16); };
@@ -1095,7 +1137,7 @@ async function runSelfTest() {
     log(gl.getExtension('EXT_color_buffer_float') ? 'PASS' : 'FAIL', 'Float render targets (EXT_color_buffer_float)');
     log('INFO', `Max texture ${gl.getParameter(gl.MAX_TEXTURE_SIZE)} · units ${gl.getParameter(gl.MAX_TEXTURE_IMAGE_UNITS)} · draw buffers ${gl.getParameter(gl.MAX_DRAW_BUFFERS)} · ${navigator.userAgent.match(/(Chrome|Edg|Firefox)\/[\d.]+/)?.[0] || ''}`);
     log('INFO', `Boot (shader compile + setup): ${fmt(bootMs, 0)} ms`);
-    let ls = false; try { localStorage.setItem('plumelab.t', '1'); ls = localStorage.getItem('plumelab.t') === '1'; localStorage.removeItem('plumelab.t'); } catch (e) {}
+    let ls = false; try { localStorage.setItem('rncfd.t', '1'); ls = localStorage.getItem('rncfd.t') === '1'; localStorage.removeItem('rncfd.t'); } catch (e) {}
     log(ls ? 'PASS' : 'WARN', ls ? 'Settings storage works' : 'Settings storage unavailable (settings will not be remembered)');
 
     // 2. speed at each grid resolution
@@ -1156,6 +1198,13 @@ async function runSelfTest() {
     }
     Object.assign(S, { split: false, sonic: 0, glow: true, particles: false, centerPlot: false, cmap: 'plasma', mirror: true }); renderer.setColormap('plasma'); fitView();
 
+    // physics switches
+    for (const [name, patch] of [['Viscosity off', { viscous: false }], ['Afterburning off', { viscous: true, afterburn: false }], ['Both on', { viscous: true, afterburn: true }]]) {
+      Object.assign(S, patch);
+      await runFor(800);
+      const bad = finiteState(), e = glErr();
+      log(!bad && !e && !contextLost ? 'PASS' : 'FAIL', `${name}${bad ? ' · NaN ' + bad : ''}${e ? ' · ' + e : ''}`);
+    }
     // 5. live changes while running
     for (const [name, patch, kind] of [['Exit diameter 125→160 mm', { De: 160 }, 'geo'], ['Throat diameter 30→36 mm', { Dt: 36 }, 'geo'], ['Conical nozzle', { type: 'cone' }, 'geo'], ['Rocket body on', { base: true }, 'geo'], ['Chamber pressure 90→150 bar', { Pc: 150 }, 'live'], ['Altitude 0→20 km', { alt: 20 }, 'live'], ['Flight Mach 0→2', { mach: 2 }, 'live'], ['Throttle 60 %', { throttle: 60 }, 'live']]) {
       Object.assign(S, patch); if (kind === 'geo') remesh();
@@ -1227,7 +1276,7 @@ async function runSelfTest() {
 // ---------------------------------------------------------------------------
 // Settings persistence (browser storage; per-browser, best effort)
 // ---------------------------------------------------------------------------
-const STORE_KEY = 'plumelab.settings.v1';
+const STORE_KEY = 'rncfd.settings.v1';
 const TRANSIENT = new Set(['ascent', 'throttleSweep']);
 let saveTimer = null;
 function saveSettings() {
@@ -1282,9 +1331,9 @@ function boot() {
   requestAnimationFrame(t => { lastFrameT = t; frame(t); });
   if (/selftest/i.test(location.hash)) setTimeout(runSelfTest, 1500);
   // expose a small API for testing / tinkering from the console
-  window.plume = { S, get setup() { return setup; }, get solver() { return solver; }, get renderer() { return renderer; }, restart,
-    get gpu() { return window.__gpu; }, get lossCount() { return lossCount; }, get stepsPerSec() { return stepsPerSec; }, get fps() { return fps; }, get budget() { return budget; }, applyPreset, setField, get perf() { return perf; }, get simTime() { return simTime; },
-    stepNow: (n) => { solver.step(n, P); stepsTotal += n; readback(); updateHUD(); }, composite, setRunning,
+  window.nozzle = { S, get setup() { return setup; }, get solver() { return solver; }, get renderer() { return renderer; }, restart,
+    get gpu() { return window.__gpu; }, get lossCount() { return lossCount; }, get stepsPerSec() { return stepsPerSec; }, get fps() { return fps; }, get budget() { return budget; }, applyPreset, setField, get perf() { return perf; }, get chamber() { return chamber; }, get sep() { return sep; }, get simTime() { return simTime; }, get P() { return P; }, get live() { return live; },
+    stepNow: (n) => { solver.step(n, P); stepsTotal += n; readback(); processWall(solver._readRect(solver.drawWallRow(), 0, 0, setup.Nx, 1)); updateHUD(); }, composite, setRunning, view, fitView,
     runSelfTest, get selfTestReport() { return window.__selfTestReport; },
     loseContext: () => { const e = gl.getExtension('WEBGL_lose_context'); e.loseContext(); setTimeout(() => e.restoreContext(), 500); } };
 }
