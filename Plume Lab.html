@@ -1,0 +1,3250 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Plume Lab — Rocket Nozzle Flow Simulator</title>
+<style>
+:root {
+  --bg: #06070b; --bg2: #0b0d13; --panel: #0d1017; --line: #1b2030; --line2: #262c3f;
+  --text: #c9d0de; --dim: #6d7689; --dimmer: #464e60; --accent: #3fd0ff; --accent2: #5cf2a8;
+  --warn: #ffb547; --bad: #ff6b6b;
+  --mono: "JetBrains Mono", "Cascadia Mono", "Cascadia Code", Consolas, "SF Mono", Menlo, monospace;
+  --sans: "Segoe UI", system-ui, -apple-system, "Helvetica Neue", Arial, sans-serif;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text); font-family: var(--sans); font-size: 13px; overflow: hidden; }
+button, select, input { font-family: inherit; font-size: inherit; color: inherit; }
+#app { display: flex; height: 100vh; width: 100vw; }
+#stage { flex: 1; display: flex; flex-direction: column; min-width: 0; position: relative; }
+#topbar { display: flex; align-items: center; gap: 4px; padding: 8px 12px; border-bottom: 1px solid var(--line); background: var(--bg2); flex-wrap: wrap; }
+#brand { font-family: var(--mono); font-size: 12px; letter-spacing: .22em; color: var(--text); margin-right: 14px; white-space: nowrap; }
+#brand b { color: var(--accent); font-weight: 600; }
+.tab { background: transparent; border: 1px solid transparent; color: var(--dim); padding: 5px 9px; border-radius: 4px; cursor: pointer; font-family: var(--mono); font-size: 11px; letter-spacing: .06em; text-transform: uppercase; }
+.tab:hover { color: var(--text); border-color: var(--line2); }
+.tab.on { color: var(--bg); background: var(--accent); }
+#viewport { flex: 1; position: relative; min-height: 0; background: #000; cursor: crosshair; }
+#viewport canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+#hud-top { position: absolute; left: 0; right: 0; top: 0; display: flex; justify-content: space-between; padding: 10px 14px; pointer-events: none;
+  font-family: var(--mono); font-size: 11px; letter-spacing: .16em; color: rgba(200,210,230,.55); text-transform: uppercase; }
+#hud-top .big { color: rgba(220,230,245,.85); }
+#probe { position: absolute; pointer-events: none; display: none; background: rgba(8,10,16,.88); border: 1px solid var(--line2); border-radius: 4px; padding: 6px 8px;
+  font-family: var(--mono); font-size: 11px; line-height: 1.5; color: var(--text); white-space: pre; z-index: 5; }
+#msg { position: absolute; left: 50%; top: 40%; transform: translate(-50%, -50%); max-width: 520px; text-align: center; background: rgba(10,12,18,.95);
+  border: 1px solid var(--line2); border-radius: 8px; padding: 20px 24px; display: none; line-height: 1.6; z-index: 10; }
+#hud { display: grid; grid-template-columns: repeat(6, 1fr); border-top: 1px solid var(--line); background: var(--bg2); }
+.metric { padding: 10px 14px 9px; border-right: 1px solid var(--line); min-width: 0; }
+.metric:last-child { border-right: 0; }
+.metric .k { font-family: var(--mono); font-size: 10px; letter-spacing: .18em; color: var(--dim); text-transform: uppercase; white-space: nowrap; }
+.metric .v { font-family: var(--mono); font-size: 22px; color: #e6ebf5; margin-top: 2px; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.metric .v small { font-size: 11px; color: var(--dim); margin-left: 3px; letter-spacing: .05em; }
+.metric .s { font-family: var(--mono); font-size: 10px; color: var(--dimmer); margin-top: 1px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#transport { display: flex; align-items: center; gap: 6px; padding: 7px 12px; border-top: 1px solid var(--line); background: var(--bg); flex-wrap: wrap; }
+.btn { background: var(--panel); border: 1px solid var(--line2); color: var(--text); padding: 6px 11px; border-radius: 5px; cursor: pointer; white-space: nowrap; }
+.btn:hover { border-color: var(--accent); }
+.btn.primary { background: var(--accent); color: #02121a; border-color: var(--accent); font-weight: 600; }
+.btn.rec { border-color: #5a2a2a; }
+.btn.rec.on { background: #c0392b; border-color: #e74c3c; color: #fff; }
+.btn.on { border-color: var(--accent); color: var(--accent); }
+#transport .sep { width: 1px; height: 20px; background: var(--line2); margin: 0 4px; }
+#transport .lbl { color: var(--dim); font-size: 12px; }
+#footer { font-family: var(--mono); font-size: 10px; color: var(--dimmer); letter-spacing: .12em; text-transform: uppercase; margin-left: auto; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+#panel { width: 360px; flex: 0 0 360px; background: var(--panel); border-left: 1px solid var(--line); display: flex; flex-direction: column; min-height: 0; }
+#panel.hidden { display: none; }
+#panel-head { padding: 10px 14px; border-bottom: 1px solid var(--line); display: flex; gap: 8px; align-items: center; }
+#panel-head select { flex: 1; }
+#panel-body { overflow-y: auto; flex: 1; padding: 0 0 30px; }
+#panel-body::-webkit-scrollbar { width: 8px; }
+#panel-body::-webkit-scrollbar-thumb { background: var(--line2); border-radius: 4px; }
+details.sec { border-bottom: 1px solid var(--line); }
+details.sec > summary { list-style: none; cursor: pointer; padding: 11px 14px; font-family: var(--mono); font-size: 11px; letter-spacing: .18em; text-transform: uppercase; color: var(--dim); display: flex; justify-content: space-between; }
+details.sec > summary::after { content: '+'; color: var(--dimmer); }
+details.sec[open] > summary::after { content: '–'; }
+details.sec > summary:hover { color: var(--text); }
+.sec-body { padding: 2px 14px 12px; }
+.row { margin: 9px 0 11px; }
+.row .top { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; margin-bottom: 5px; }
+.row .name { color: var(--text); font-size: 12.5px; }
+.row .name .live { color: var(--accent2); font-size: 9px; font-family: var(--mono); letter-spacing: .1em; margin-left: 5px; vertical-align: 1px; }
+.row .val { font-family: var(--mono); font-size: 12px; color: var(--accent); white-space: nowrap; }
+.row .val input { width: 70px; background: transparent; border: 1px solid transparent; color: var(--accent); text-align: right; font-family: var(--mono); font-size: 12px; padding: 1px 3px; border-radius: 3px; }
+.row .val input:hover, .row .val input:focus { border-color: var(--line2); outline: none; background: var(--bg); }
+.row .val .u { color: var(--dim); margin-left: 3px; }
+.row .hint { color: var(--dimmer); font-size: 11px; margin-top: 3px; }
+select { background: var(--bg); border: 1px solid var(--line2); border-radius: 5px; padding: 6px 8px; color: var(--text); width: 100%; }
+input[type=range] { -webkit-appearance: none; appearance: none; width: 100%; height: 18px; background: transparent; margin: 0; }
+input[type=range]::-webkit-slider-runnable-track { height: 3px; background: var(--line2); border-radius: 2px; }
+input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 13px; height: 13px; border-radius: 50%; background: var(--accent); margin-top: -5px; border: 2px solid #02121a; }
+input[type=range]::-moz-range-track { height: 3px; background: var(--line2); }
+input[type=range]::-moz-range-thumb { width: 11px; height: 11px; border-radius: 50%; background: var(--accent); border: 2px solid #02121a; }
+.toggle { display: flex; align-items: center; justify-content: space-between; margin: 10px 0; cursor: pointer; }
+.toggle input { accent-color: var(--accent); width: 16px; height: 16px; }
+.seg { display: flex; gap: 4px; flex-wrap: wrap; }
+.seg button { flex: 1; background: var(--bg); border: 1px solid var(--line2); border-radius: 4px; padding: 5px 4px; cursor: pointer; color: var(--dim); font-size: 12px; }
+.seg button.on { border-color: var(--accent); color: var(--accent); }
+table.th { width: 100%; border-collapse: collapse; font-family: var(--mono); font-size: 11.5px; }
+table.th td { padding: 4px 0; border-bottom: 1px solid var(--line); }
+table.th td:first-child { color: var(--dim); }
+table.th td.n { text-align: right; color: var(--text); white-space: nowrap; }
+table.th tr.head td { color: var(--dimmer); font-size: 10px; letter-spacing: .14em; text-transform: uppercase; }
+.state { display: inline-block; padding: 2px 7px; border-radius: 10px; font-family: var(--mono); font-size: 10.5px; letter-spacing: .06em; }
+.state.under { background: rgba(63,208,255,.13); color: var(--accent); }
+.state.over { background: rgba(255,181,71,.13); color: var(--warn); }
+.state.ideal { background: rgba(92,242,168,.13); color: var(--accent2); }
+.state.vac { background: rgba(180,140,255,.13); color: #b48cff; }
+.note { color: var(--dim); font-size: 11.5px; line-height: 1.55; margin: 8px 0; }
+.note.warn { color: var(--warn); }
+.kbd { font-family: var(--mono); font-size: 10.5px; border: 1px solid var(--line2); border-radius: 3px; padding: 0 4px; color: var(--dim); }
+#panel-toggle { position: absolute; right: 10px; top: 52px; z-index: 6; }
+@media (max-width: 900px) {
+  #app { flex-direction: column; }
+  #panel { width: 100%; flex: 1 1 45%; border-left: 0; border-top: 1px solid var(--line); }
+  #hud { grid-template-columns: repeat(3, 1fr); }
+  .metric .v { font-size: 17px; }
+}
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="stage">
+    <div id="topbar">
+      <div id="brand">PLUME<b>LAB</b></div>
+      <div id="tabs"></div>
+    </div>
+    <div id="viewport">
+      <canvas id="gl"></canvas>
+      <canvas id="overlay"></canvas>
+      <div id="hud-top"><div><span id="fieldname" class="big">Temperature field</span><br><span id="simtime">T+ 0.000 ms</span></div>
+        <div style="text-align:right"><span id="solvestat">—</span><br><span id="gridstat">—</span></div></div>
+      <div id="probe"></div>
+      <div id="msg"></div>
+    </div>
+    <div id="hud">
+      <div class="metric"><div class="k">Thrust</div><div class="v" id="m-thrust">—</div><div class="s" id="s-thrust">ideal —</div></div>
+      <div class="metric"><div class="k">Exit Mach</div><div class="v" id="m-mach">—</div><div class="s" id="s-mach">ideal —</div></div>
+      <div class="metric"><div class="k">Chamber</div><div class="v" id="m-tc">—</div><div class="s" id="s-tc">target —</div></div>
+      <div class="metric"><div class="k">Pc</div><div class="v" id="m-pc">—</div><div class="s" id="s-pc">target —</div></div>
+      <div class="metric"><div class="k">Isp</div><div class="v" id="m-isp">—</div><div class="s" id="s-isp">ideal —</div></div>
+      <div class="metric"><div class="k">Pe / Pa</div><div class="v" id="m-ratio">—</div><div class="s" id="s-ratio">—</div></div>
+    </div>
+    <div id="transport">
+      <button class="btn primary" id="b-play" title="Space">❚❚ Pause</button>
+      <button class="btn" id="b-restart" title="R">↺ Restart</button>
+      <button class="btn" id="b-step" title="N">Step</button>
+      <div class="sep"></div>
+      <span class="lbl">Speed</span>
+      <input type="range" id="speed" min="1" max="100" step="1" value="20" style="width:110px">
+      <span class="lbl" id="speedval" style="font-family:var(--mono);width:68px">20 st/fr</span>
+      <div class="sep"></div>
+      <button class="btn rec" id="b-rec" title="V">● Record</button>
+      <button class="btn" id="b-shot" title="S">Screenshot</button>
+      <button class="btn" id="b-panel" title="H">Panel</button>
+      <div id="footer">2D axisymmetric · inviscid Euler · frozen-γ · HLLC / MUSCL · GPU</div>
+    </div>
+  </div>
+  <div id="panel">
+    <div id="panel-head"><select id="preset"></select></div>
+    <div id="panel-body"></div>
+  </div>
+</div>
+<script>
+// ===== physics.js =====
+// ============================================================================
+// physics.js — atmosphere, 1-D isentropic nozzle theory, nozzle contour,
+// propellant + engine presets. All SI units unless stated.
+// ============================================================================
+'use strict';
+
+const G0 = 9.80665;
+const RU = 8314.462618;          // J/(kmol K)
+const R_AIR = 287.053;           // J/(kg K)
+// Normalisation used by the GPU solver (keeps float32 well-conditioned)
+const P_REF = 101325.0;
+const T_REF = 288.15;
+const R_REF = R_AIR;
+const RHO_REF = P_REF / (R_REF * T_REF);   // 1.225 kg/m^3
+const U_REF = Math.sqrt(P_REF / RHO_REF);  // ~287.6 m/s
+
+// ---------------------------------------------------------------------------
+// US Standard Atmosphere 1976 (geopotential approx, 0–86 km)
+// ---------------------------------------------------------------------------
+const ISA_LAYERS = [
+  // h_base (m), T_base (K), lapse (K/m), p_base (Pa)
+  [0, 288.15, -0.0065, 101325.0],
+  [11000, 216.65, 0.0, 22632.06],
+  [20000, 216.65, 0.001, 5474.889],
+  [32000, 228.65, 0.0028, 868.0187],
+  [47000, 270.65, 0.0, 110.9063],
+  [51000, 270.65, -0.0028, 66.93887],
+  [71000, 214.65, -0.002, 3.956420],
+  [86000, 186.87, 0.0, 0.3734],
+];
+function atmosphere(h) {
+  h = Math.max(0, Math.min(h, 120000));
+  let L = ISA_LAYERS[0];
+  for (const layer of ISA_LAYERS) if (h >= layer[0]) L = layer;
+  const [hb, Tb, lapse, pb] = L;
+  const k = G0 / R_AIR; // 0.034163 K/m
+  let T, p;
+  if (Math.abs(lapse) < 1e-12) {
+    T = Tb;
+    p = pb * Math.exp(-k * (h - hb) / Tb);
+  } else {
+    T = Tb + lapse * (h - hb);
+    p = pb * Math.pow(Tb / T, k / lapse);
+  }
+  return { T, p, rho: p / (R_AIR * T), a: Math.sqrt(1.4 * R_AIR * T) };
+}
+
+// ---------------------------------------------------------------------------
+// Isentropic relations
+// ---------------------------------------------------------------------------
+function areaRatioFromMach(M, g) {
+  const t = (2 / (g + 1)) * (1 + 0.5 * (g - 1) * M * M);
+  return Math.pow(t, (g + 1) / (2 * (g - 1))) / M;
+}
+function machFromAreaRatio(eps, g, supersonic = true) {
+  if (eps <= 1.0) return 1.0;
+  let lo = supersonic ? 1.0 : 1e-6, hi = supersonic ? 100.0 : 1.0;
+  for (let k = 0; k < 200; k++) {
+    const mid = 0.5 * (lo + hi);
+    const f = areaRatioFromMach(mid, g) - eps;
+    if (supersonic) { if (f > 0) hi = mid; else lo = mid; }
+    else { if (f > 0) lo = mid; else hi = mid; }
+  }
+  return 0.5 * (lo + hi);
+}
+function machFromPressureRatio(p0_over_p, g) {
+  return Math.sqrt(Math.max(0, (Math.pow(p0_over_p, (g - 1) / g) - 1) * 2 / (g - 1)));
+}
+
+// Ideal (1-D, isentropic, frozen-gamma) rocket nozzle performance
+function nozzleTheory(o) {
+  // o: { Pc, Tc, gamma, Mw, Dt, De, pa }
+  const g = o.gamma, R = RU / o.Mw;
+  const At = Math.PI * 0.25 * o.Dt * o.Dt;
+  const Ae = Math.PI * 0.25 * o.De * o.De;
+  const eps = Ae / At;
+  const Me = machFromAreaRatio(eps, g, true);
+  const fT = 1 + 0.5 * (g - 1) * Me * Me;
+  const pe = o.Pc * Math.pow(fT, -g / (g - 1));
+  const Te = o.Tc / fT;
+  const ue = Me * Math.sqrt(g * R * Te);
+  const Gam = Math.sqrt(g) * Math.pow(2 / (g + 1), (g + 1) / (2 * (g - 1)));
+  const cstar = Math.sqrt(R * o.Tc) / Gam;
+  const mdot = o.Pc * At / cstar;
+  const F = mdot * ue + (pe - o.pa) * Ae;
+  const Fvac = mdot * ue + pe * Ae;
+  const Mopt = machFromPressureRatio(o.Pc / Math.max(o.pa, 1e-3), g);
+  const epsOpt = o.pa > 1 ? areaRatioFromMach(Math.max(Mopt, 1.0001), g) : Infinity;
+  const ratio = pe / Math.max(o.pa, 1e-9);
+  let state;
+  if (o.pa < 1) state = 'vacuum';
+  else if (ratio > 1.08) state = 'under-expanded';
+  else if (ratio < 0.92) state = 'over-expanded';
+  else state = 'near-ideal';
+  const separation = (o.pa > 1) && pe < 0.4 * o.pa; // Summerfield criterion
+  const uLim = Math.sqrt(2 * g / (g - 1) * R * o.Tc);
+  return {
+    At, Ae, eps, Me, pe, Te, ue, cstar, mdot, F, Fvac, Cf: F / (o.Pc * At),
+    Isp: F / (mdot * G0), IspVac: Fvac / (mdot * G0), epsOpt, ratio, state, separation,
+    c0: Math.sqrt(g * R * o.Tc), uLim, R,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Nozzle contour (inner wall radius vs axial position). Rao-style thrust-
+// optimised parabola (quadratic Bezier) or straight cone.
+// ---------------------------------------------------------------------------
+function raoAngles(eps, pct) {
+  // Fits to the classic Rao charts (80% bell), shifted for other lengths.
+  const le = Math.log10(Math.max(eps, 2));
+  let thn = 14.5 + 11.0 * le;     // ~21.5° @ ε=4, ~33° @ ε=50
+  let the = 16.5 - 5.3 * le;      // ~13° @ ε=4, ~7.5° @ ε=50
+  const d = 80 - pct;
+  thn += d * 0.30; the += d * 0.22;
+  thn = Math.min(Math.max(thn, 12), 48);
+  the = Math.min(Math.max(the, 2), thn - 4);
+  return { thn: thn * Math.PI / 180, the: the * Math.PI / 180 };
+}
+
+function buildContour(o) {
+  // o: { Dt, De, type:'bell'|'cone', bellPct, coneAngle (deg), CR, chamberLen (×Rc) }
+  const Rt = 0.5 * o.Dt, Re = Math.max(0.5 * o.De, Rt * 1.001);
+  const Rc = Rt * Math.sqrt(Math.max(o.CR, 1.5));
+  const Lc = Math.max(o.chamberLen * Rc, 1.5 * Rt);
+  const thc = 35 * Math.PI / 180;           // converging half-angle
+  const Ru = 1.5 * Rt;                      // upstream throat radius of curvature
+  const Rf = Math.min(0.6 * Rc, 1.0 * Rt * 1.5); // chamber fillet
+  const pts = [];
+  const push = (x, r) => { if (!pts.length || x > pts[pts.length - 1][0] + 1e-12) pts.push([x, r]); };
+  // chamber cylinder
+  push(0, Rc); push(Lc, Rc);
+  // fillet (chamber -> cone)
+  const nA = 24;
+  for (let k = 1; k <= nA; k++) {
+    const ph = thc * k / nA;
+    push(Lc + Rf * Math.sin(ph), Rc - Rf * (1 - Math.cos(ph)));
+  }
+  let [x1, r1] = pts[pts.length - 1];
+  const r2 = Rt + Ru * (1 - Math.cos(thc));
+  if (r1 > r2) {
+    const x2 = x1 + (r1 - r2) / Math.tan(thc);
+    push(x2, r2); x1 = x2; r1 = r2;
+  }
+  // upstream throat arc
+  const xt = x1 + Ru * Math.sin(thc);
+  for (let k = 1; k <= nA; k++) {
+    const ph = thc * (1 - k / nA);
+    push(xt - Ru * Math.sin(ph), Rt + Ru * (1 - Math.cos(ph)));
+  }
+  // downstream throat arc
+  const Rd = 0.382 * Rt;
+  const eps = (Re * Re) / (Rt * Rt);
+  let thn, the, xe;
+  if (o.type === 'cone') {
+    thn = (o.coneAngle || 15) * Math.PI / 180; the = thn;
+  } else {
+    const a = raoAngles(eps, o.bellPct || 80); thn = a.thn; the = a.the;
+  }
+  for (let k = 1; k <= nA; k++) {
+    const ph = thn * k / nA;
+    push(xt + Rd * Math.sin(ph), Rt + Rd * (1 - Math.cos(ph)));
+  }
+  const [xN, rN] = pts[pts.length - 1];
+  if (o.type === 'cone') {
+    xe = xN + (Re - rN) / Math.tan(thn);
+    const n = 40;
+    for (let k = 1; k <= n; k++) push(xN + (xe - xN) * k / n, rN + (Re - rN) * k / n);
+  } else {
+    const L15 = (Re - Rt) / Math.tan(15 * Math.PI / 180);
+    xe = xt + (o.bellPct || 80) / 100 * L15;
+    xe = Math.max(xe, xN + (Re - rN) / Math.tan(thn) * 1.02);
+    const tn = Math.tan(thn), te = Math.tan(the);
+    let qx = (Re - rN + xN * tn - xe * te) / (tn - te);
+    qx = Math.min(Math.max(qx, xN + 1e-6), xe - 1e-6);
+    let qr = rN + tn * (qx - xN);
+    qr = Math.min(Math.max(qr, rN), Re * 1.2);
+    const n = 80;
+    for (let k = 1; k <= n; k++) {
+      const s = k / n, a = (1 - s) * (1 - s), b = 2 * s * (1 - s), c = s * s;
+      push(a * xN + b * qx + c * xe, a * rN + b * qr + c * Re);
+    }
+  }
+  xe = pts[pts.length - 1][0];
+  // fast lookup: radius at x (linear interpolation, x monotone)
+  const xs = pts.map(p => p[0]), rs = pts.map(p => p[1]);
+  function radiusAt(x) {
+    if (x <= 0) return Rc;
+    if (x >= xe) return Re;
+    let lo = 0, hi = xs.length - 1;
+    while (hi - lo > 1) { const m = (lo + hi) >> 1; if (xs[m] <= x) lo = m; else hi = m; }
+    const t = (x - xs[lo]) / (xs[hi] - xs[lo]);
+    return rs[lo] + t * (rs[hi] - rs[lo]);
+  }
+  return { pts, Rt, Re, Rc, Lc, xt, xe, eps, radiusAt, thn, the };
+}
+
+// ---------------------------------------------------------------------------
+// Presets
+// ---------------------------------------------------------------------------
+const PROPELLANTS = {
+  kerolox:  { name: 'LOX / RP-1 (kerolox)',  Tc: 3670, gamma: 1.22, Mw: 22.0 },
+  methalox: { name: 'LOX / CH4 (methalox)',  Tc: 3550, gamma: 1.21, Mw: 20.5 },
+  hydrolox: { name: 'LOX / LH2 (hydrolox)',  Tc: 3400, gamma: 1.20, Mw: 13.5 },
+  hybrid:   { name: 'N2O / HTPB (hybrid)',   Tc: 3150, gamma: 1.23, Mw: 26.0 },
+  solid:    { name: 'APCP (solid motor)',    Tc: 3100, gamma: 1.20, Mw: 25.0 },
+  hydrazine:{ name: 'Hydrazine monoprop',    Tc: 1150, gamma: 1.28, Mw: 13.0 },
+  coldgas:  { name: 'Cold gas (nitrogen)',   Tc: 300,  gamma: 1.40, Mw: 28.0 },
+  custom:   { name: 'Custom',                Tc: 3000, gamma: 1.22, Mw: 22.0 },
+};
+
+const ENGINE_PRESETS = {
+  demo: {
+    name: 'Workbench demo — 14 kN kerolox (sea level)',
+    prop: 'kerolox', Pc: 196, Dt: 23, De: 119, type: 'bell', bellPct: 80, coneAngle: 15,
+    CR: 6, chamberLen: 1.6, alt: 0, mach: 0, base: false, domain: 1.2,
+  },
+  overexp: {
+    name: 'Over-expanded — vacuum bell fired at sea level',
+    prop: 'hydrolox', Pc: 120, Dt: 20, De: 160, type: 'bell', bellPct: 80, coneAngle: 15,
+    CR: 5, chamberLen: 1.4, alt: 0, mach: 0, base: false, domain: 1.4,
+  },
+  diamonds: {
+    name: 'Shock diamonds — moderate over-expansion',
+    prop: 'methalox', Pc: 90, Dt: 30, De: 125, type: 'bell', bellPct: 80, coneAngle: 15,
+    CR: 5, chamberLen: 1.5, alt: 0, mach: 0, base: false, domain: 1.2,
+  },
+  ideal: {
+    name: 'Near-ideal expansion (smooth plume)',
+    prop: 'kerolox', Pc: 70, Dt: 34, De: 99, type: 'bell', bellPct: 80, coneAngle: 15,
+    CR: 5, chamberLen: 1.5, alt: 0, mach: 0, base: false, domain: 1.2,
+  },
+  underexp: {
+    name: 'Under-expanded — high altitude (big Mach disk)',
+    prop: 'kerolox', Pc: 80, Dt: 30, De: 70, type: 'bell', bellPct: 80, coneAngle: 15,
+    CR: 5, chamberLen: 1.5, alt: 22, mach: 0, base: false, domain: 1.4,
+  },
+  coldgas: {
+    name: 'Cold-gas thruster (N2, conical)',
+    prop: 'coldgas', Pc: 20, Dt: 20, De: 30, type: 'cone', bellPct: 80, coneAngle: 15,
+    CR: 4, chamberLen: 1.4, alt: 0, mach: 0, base: false, domain: 0.6,
+  },
+  hybrid: {
+    name: 'Amateur hybrid motor (N2O/HTPB, conical)',
+    prop: 'hybrid', Pc: 30, Dt: 30, De: 64, type: 'cone', bellPct: 80, coneAngle: 12,
+    CR: 4, chamberLen: 2.0, alt: 0, mach: 0, base: false, domain: 1.0,
+  },
+  upper: {
+    name: 'Upper stage at 30 km (huge under-expanded plume)',
+    prop: 'hydrolox', Pc: 100, Dt: 16, De: 100, type: 'bell', bellPct: 80, coneAngle: 15,
+    CR: 5, chamberLen: 1.5, alt: 30, mach: 0, base: false, domain: 1.4,
+  },
+  flight: {
+    name: 'Supersonic flight — Mach 2 at 12 km with rocket base',
+    prop: 'kerolox', Pc: 100, Dt: 26, De: 90, type: 'bell', bellPct: 80, coneAngle: 15,
+    CR: 5, chamberLen: 1.5, alt: 12, mach: 2.0, base: true, domain: 1.2,
+  },
+};
+
+if (typeof module !== 'undefined') {
+  module.exports = { atmosphere, nozzleTheory, buildContour, machFromAreaRatio, areaRatioFromMach,
+    PROPELLANTS, ENGINE_PRESETS, P_REF, T_REF, R_REF, RHO_REF, U_REF, R_AIR, RU, G0 };
+}
+
+// ===== cutcell.js =====
+// ============================================================================
+// cutcell.js — embedded-boundary ("cut-cell") geometry for the solver.
+//
+// For every cell: r-weighted fluid volume V = ∫∫ r dx dr and meridional area
+// Am = ∫∫ dx dr. For every face: r-weighted open area (x-faces: ∫ r dr over
+// the open part; r-faces: r_face × open length). The wall vector of a cut cell
+// follows from the closure (divergence theorem), so uniform pressure stays
+// exactly in balance. Slivers with volume fraction < 0.5 are merged into the
+// neighbour they share the largest open face with, which keeps the explicit
+// time step stable. All lengths in grid units (cell size = 1).
+// ============================================================================
+'use strict';
+
+function buildCutGeometry(o) {
+  // o: { Nx, Nr, dx, contour, tw, base, xBase, bodyR, mode: 'cut' | 'stair' }
+  const { Nx, Nr, dx, contour } = o;
+  const cut = o.mode !== 'stair';
+  const xeC = contour.xe / dx, twC = o.tw / dx, xBaseC = o.xBase / dx, bodyC = o.bodyR / dx;
+  // fine table of the inner-wall radius (cells) every 1/SUB cell in x
+  const SUB = 8;
+  const nTab = Nx * SUB + 1;
+  const Rtab = new Float32Array(nTab);
+  for (let k = 0; k < nTab; k++) {
+    const X = (k / SUB) * dx;
+    Rtab[k] = X <= contour.xe ? contour.radiusAt(X) / dx : -1e9;
+  }
+  const RinAt = (xc) => {
+    if (xc > xeC) return -1e9;
+    const f = Math.min(Math.max(xc * SUB, 0), nTab - 1);
+    const k = Math.min(Math.floor(f), nTab - 2), t = f - k;
+    const a = Rtab[k], b = Rtab[k + 1];
+    if (a < -1e8 || b < -1e8) return contour.radiusAt(Math.min(xc * dx, contour.xe)) / dx;
+    return a + (b - a) * t;
+  };
+  const fluid = (xc, rc) => {
+    if (xc <= xeC) {
+      const ri = RinAt(xc);
+      if (rc >= ri && rc <= ri + twC) return false;
+      if (o.base && xc < xBaseC && rc >= ri && rc < bodyC) return false;
+    }
+    return true;
+  };
+  // per column: radius range of the inner wall over [i, i+1]
+  const colMin = new Float32Array(Nx), colMax = new Float32Array(Nx);
+  for (let i = 0; i < Nx; i++) {
+    let mn = 1e9, mx = -1e9;
+    for (let a = 0; a <= SUB; a++) { const k = i * SUB + a; const r = Rtab[k]; if (r > -1e8) { mn = Math.min(mn, r); mx = Math.max(mx, r); } }
+    colMin[i] = mn; colMax[i] = mx;
+  }
+  const overlaps = (a0, a1, b0, b1) => a0 < b1 && a1 > b0;
+  const maybeCut = (i, j) => {
+    if (!cut) return false;
+    const x0 = i, x1 = i + 1, r0 = j, r1 = j + 1;
+    if (colMax[i] < -1e8) return false;          // column entirely downstream of the nozzle
+    const mn = colMin[i], mx = colMax[i];
+    if (overlaps(r0, r1, mn - 1e-6, mx + 1e-6)) return true;
+    if (overlaps(r0, r1, mn + twC - 1e-6, mx + twC + 1e-6)) return true;
+    if (xeC >= x0 && xeC <= x1 && overlaps(r0, r1, mn, mx + twC)) return true;
+    if (o.base) {
+      if (xBaseC >= x0 && xBaseC <= x1 && overlaps(r0, r1, mn, bodyC)) return true;
+      if (x0 < xBaseC && bodyC >= r0 && bodyC <= r1) return true;
+    }
+    return false;
+  };
+
+  const NC = 8, NF = 12;
+  const V = new Float32Array(Nx * Nr), Am = new Float32Array(Nx * Nr), isCut = new Uint8Array(Nx * Nr);
+  for (let j = 0; j < Nr; j++) for (let i = 0; i < Nx; i++) {
+    const k = j * Nx + i;
+    if (maybeCut(i, j)) {
+      let am = 0, v = 0;
+      for (let b = 0; b < NC; b++) {
+        const rc = j + (b + 0.5) / NC;
+        for (let a = 0; a < NC; a++) if (fluid(i + (a + 0.5) / NC, rc)) { am += 1; v += rc; }
+      }
+      Am[k] = am / (NC * NC); V[k] = v / (NC * NC);
+      isCut[k] = (Am[k] > 0 && Am[k] < 1) ? 1 : 0;
+    } else if (fluid(i + 0.5, j + 0.5)) { Am[k] = 1; V[k] = j + 0.5; }
+  }
+  // faces (index on the (Nx+1) x (Nr+1) lattice)
+  const W1 = Nx + 1;
+  const Ax = new Float32Array(W1 * (Nr + 1)), Ar = new Float32Array(W1 * (Nr + 1));
+  const cutAt = (i, j) => (i >= 0 && i < Nx && j >= 0 && j < Nr) ? isCut[j * Nx + i] : 0;
+  for (let j = 0; j < Nr; j++) for (let i = 0; i <= Nx; i++) {         // x-faces at x = i
+    let a;
+    if (cut && (cutAt(i - 1, j) || cutAt(i, j) || maybeCut(Math.min(i, Nx - 1), j) || (i > 0 && maybeCut(i - 1, j)))) {
+      a = 0;
+      for (let b = 0; b < NF; b++) { const rc = j + (b + 0.5) / NF; if (fluid(i, rc)) a += rc; }
+      a /= NF;
+    } else a = fluid(i, j + 0.5) ? j + 0.5 : 0;
+    Ax[j * W1 + i] = a;
+  }
+  for (let j = 0; j <= Nr; j++) for (let i = 0; i < Nx; i++) {         // r-faces at r = j
+    let a;
+    if (cut && (cutAt(i, j - 1) || cutAt(i, j) || (j < Nr && maybeCut(i, j)) || (j > 0 && maybeCut(i, j - 1)))) {
+      let f = 0;
+      for (let b = 0; b < NF; b++) if (fluid(i + (b + 0.5) / NF, j)) f++;
+      a = j * f / NF;
+    } else a = fluid(i + 0.5, j) ? j : 0;
+    Ar[j * W1 + i] = a;
+  }
+
+  // ---------------- classification ----------------
+  const solid = new Uint8Array(Nx * Nr);
+  const kap = new Float32Array(Nx * Nr);
+  for (let j = 0; j < Nr; j++) for (let i = 0; i < Nx; i++) {
+    const k = j * Nx + i;
+    kap[k] = V[k] / (j + 0.5);
+    if (kap[k] < 0.02) solid[k] = 1;
+  }
+  const zeroSolidFaces = () => {
+    for (let j = 0; j < Nr; j++) for (let i = 0; i < Nx; i++) {
+      if (!solid[j * Nx + i]) continue;
+      Ax[j * W1 + i] = 0; Ax[j * W1 + i + 1] = 0; Ar[j * W1 + i] = 0; Ar[(j + 1) * W1 + i] = 0;
+    }
+  };
+  zeroSolidFaces();
+  // merge slivers into a neighbour with kappa >= 0.5
+  const host = new Int32Array(Nx * Nr).fill(-1);   // -1: own host
+  const KMERGE = 0.5;
+  for (let pass = 0; pass < 2; pass++) {
+    for (let j = 0; j < Nr; j++) for (let i = 0; i < Nx; i++) {
+      const k = j * Nx + i;
+      if (solid[k] || kap[k] >= KMERGE || host[k] >= 0) continue;
+      let best = -1, bestA = 0;
+      const cand = [
+        [i - 1, j, Ax[j * W1 + i] / (j + 0.5)], [i + 1, j, Ax[j * W1 + i + 1] / (j + 0.5)],
+        [i, j - 1, j > 0 ? Ar[j * W1 + i] / j : 0], [i, j + 1, Ar[(j + 1) * W1 + i] / (j + 1)],
+      ];
+      for (const [ii, jj, a] of cand) {
+        if (ii < 0 || ii >= Nx || jj < 0 || jj >= Nr) continue;
+        const kk = jj * Nx + ii;
+        if (solid[kk] || kap[kk] < KMERGE || host[kk] >= 0) continue;
+        if (a > bestA + 1e-9) { bestA = a; best = kk; }
+      }
+      if (best >= 0 && bestA > 0.02) host[k] = best;
+      else if (pass === 1) solid[k] = 1;
+    }
+  }
+  zeroSolidFaces();
+  // first-order flag for faces next to cut cells: store the area negated
+  const ax = (i, j) => Ax[j * W1 + i], ar = (i, j) => Ar[j * W1 + i];
+  const geoA = new Float32Array(W1 * (Nr + 1) * 4);
+  const partial = (i, j) => (i >= 0 && i < Nx && j >= 0 && j < Nr) && !solid[j * Nx + i] && (kap[j * Nx + i] < 0.98 || host[j * Nx + i] >= 0);
+  for (let j = 0; j <= Nr; j++) for (let i = 0; i <= Nx; i++) {
+    const q = (j * W1 + i) * 4;
+    if (i < Nx && j < Nr) { const k = j * Nx + i; geoA[q] = V[k]; geoA[q + 1] = Am[k]; }
+    if (j < Nr) { const a = ax(i, j); geoA[q + 2] = (partial(i - 1, j) || partial(i, j)) ? -a : a; }
+    if (i < Nx) { const a = ar(i, j); geoA[q + 3] = (partial(i, j - 1) || partial(i, j)) ? -a : a; }
+  }
+  // wall vectors (closure) and group sums
+  const Wx = new Float32Array(Nx * Nr), Wr = new Float32Array(Nx * Nr);
+  for (let j = 0; j < Nr; j++) for (let i = 0; i < Nx; i++) {
+    const k = j * Nx + i;
+    if (solid[k]) continue;
+    Wx[k] = ax(i, j) - ax(i + 1, j);
+    Wr[k] = Am[k] - (ar(i, j + 1) - ar(i, j));
+    if (Math.abs(Wx[k]) < 1e-6) Wx[k] = 0;
+    if (Math.abs(Wr[k]) < 1e-6) Wr[k] = 0;
+  }
+  const geoG = new Float32Array(Nx * Nr * 4), geoM = new Float32Array(Nx * Nr * 4);
+  const gV = new Float32Array(Nx * Nr), gA = new Float32Array(Nx * Nr), gX = new Float32Array(Nx * Nr), gR = new Float32Array(Nx * Nr);
+  const slaveMask = new Uint8Array(Nx * Nr);
+  for (let k = 0; k < Nx * Nr; k++) if (!solid[k]) { const h = host[k] >= 0 ? host[k] : k; gV[h] += V[k]; gA[h] += Am[k]; gX[h] += Wx[k]; gR[h] += Wr[k]; }
+  for (let j = 0; j < Nr; j++) for (let i = 0; i < Nx; i++) {
+    const k = j * Nx + i;
+    if (solid[k] || host[k] < 0) continue;
+    const h = host[k], hi = h % Nx, hj = (h - hi) / Nx;
+    const bit = i < hi ? 1 : i > hi ? 2 : j < hj ? 4 : 8;
+    slaveMask[h] |= bit;
+  }
+  let nCut = 0, nMerged = 0;
+  for (let j = 0; j < Nr; j++) for (let i = 0; i < Nx; i++) {
+    const k = j * Nx + i, q = k * 4;
+    if (solid[k]) { geoG[q] = 1; continue; }
+    const h = host[k] >= 0 ? host[k] : k, hi = h % Nx, hj = (h - hi) / Nx;
+    geoG[q] = gV[h]; geoG[q + 1] = gA[h]; geoG[q + 2] = gX[h]; geoG[q + 3] = gR[h];
+    geoM[q] = hi - i; geoM[q + 1] = hj - j; geoM[q + 2] = slaveMask[k]; geoM[q + 3] = kap[k];
+    if (kap[k] < 0.98) nCut++;
+    if (host[k] >= 0) nMerged++;
+  }
+  return { mask: solid, geoA, geoG, geoM, Ax, Ar, W1, kappa: kap, nCut, nMerged };
+}
+
+if (typeof module !== 'undefined') module.exports = { buildCutGeometry };
+
+// ===== solver.js =====
+// ============================================================================
+// solver.js — WebGL2 GPU solver for the 2-D axisymmetric compressible Euler
+// equations + a passive exhaust scalar.
+//   * Finite volume, uniform square cells (dx = dr = 1 in grid units)
+//   * MUSCL reconstruction of primitives (van Leer limiter)
+//   * HLLC Riemann solver, blended to HLL near strong shocks (anti-carbuncle)
+//   * SSP-RK2 (Heun) time stepping, CFL time step computed on the GPU
+//   * Staircase solid walls via mirror ghost states
+// State textures (RGBA32F): A = (rho, rho*u, rho*v, E), B = (rho*Y, 0, 0, 0)
+// All quantities are normalised: p/P_REF, rho/RHO_REF, u/U_REF.
+// ============================================================================
+'use strict';
+
+const GLSL_COMMON = `#version 300 es
+precision highp float;
+precision highp int;
+precision highp sampler2D;
+uniform ivec2 uN;          // Nx, Nr
+uniform float uGamma;
+uniform sampler2D uMask;   // r > 0.5 : solid
+const float RHO_MIN = 1e-7;
+const float P_MIN   = 1e-7;
+struct Prim { vec4 w; float y; };   // w = (rho, u, v, p)
+
+bool solidAt(ivec2 c) { return texelFetch(uMask, c, 0).r > 0.5; }
+
+Prim toPrim(vec4 a, float b) {
+  float rho = max(a.x, RHO_MIN);
+  vec2 vel = a.yz / rho;
+  float p = max((uGamma - 1.0) * (a.w - 0.5 * rho * dot(vel, vel)), P_MIN);
+  return Prim(vec4(rho, vel, p), clamp(b / rho, 0.0, 1.0));
+}
+`;
+
+const VS_QUAD = `#version 300 es
+in vec2 aPos;
+out vec2 vUv;
+void main() { vUv = aPos * 0.5 + 0.5; gl_Position = vec4(aPos, 0.0, 1.0); }
+`;
+
+// ---------------------------------------------------------------------------
+// Primitive pass: writes a PADDED texture of size (Nx+4) x (Nr+4) holding the
+// primitive state (rho,u,v,p) of every cell plus a 2-cell halo of boundary
+// ghost cells (stagnation inlet, far field, outflow, axis mirror). Wall cells
+// are flagged with rho < 0. All boundary branching lives here, once per cell,
+// which keeps the flux shaders small and quick to compile.
+// ---------------------------------------------------------------------------
+const FS_PRIM = GLSL_COMMON + `
+uniform sampler2D uA; uniform sampler2D uB;
+uniform sampler2D uStep;    // (dt, t_old, t_new, wmax)
+uniform int uTimeSel;       // 1 -> t_old, 2 -> t_new
+uniform vec4 uAmb;          // freestream primitive (rho, u, v, p), Y = 0
+uniform vec3 uRes;          // reservoir: (P0 target, T0 normalised, R_exhaust normalised)
+uniform float uPambStart;   // pressure at which the ignition ramp starts
+uniform float uRamp;        // ramp duration (grid time units); <= 0 -> instant
+uniform float uRcCells;     // chamber radius in cells (reservoir rows)
+layout(location = 0) out vec4 oW;
+layout(location = 1) out vec4 oWb;
+Prim interior(ivec2 c) { return toPrim(texelFetch(uA, c, 0), texelFetch(uB, c, 0).r); }
+void main() {
+  ivec2 P = ivec2(gl_FragCoord.xy) - 2;
+  int i = P.x, j = P.y, Nx = uN.x, Nr = uN.y;
+  bool mir = j < 0;
+  if (mir) j = -j - 1;
+  Prim q = Prim(uAmb, 0.0);
+  bool wall = false;
+  if (i < 0) {
+    // left boundary: injector face (stagnation inlet) / chamber wall / free stream
+    if (j < Nr && solidAt(ivec2(0, j))) wall = true;
+    else if (float(j) + 0.5 < uRcCells) {
+      vec4 st = texelFetch(uStep, ivec2(0), 0);
+      float t = uTimeSel == 1 ? st.y : st.z;
+      float f = uRamp > 0.0 ? smoothstep(0.0, uRamp, t) : 1.0;
+      float P0 = mix(uPambStart, uRes.x, f);
+      float T0 = uRes.y, R = uRes.z, g = uGamma;
+      vec4 a = texelFetch(uA, ivec2(0, j), 0);
+      float u = clamp(a.y / max(a.x, RHO_MIN), 0.0, 0.5 * sqrt(g * R * T0));
+      float T = T0 - u * u * (g - 1.0) / (2.0 * g * R);
+      float p = P0 * pow(T / T0, g / (g - 1.0));
+      q = Prim(vec4(p / (R * T), u, 0.0, p), 1.0);
+    }
+  } else if (j >= Nr) {
+    // top: pressure far field
+    ivec2 c = ivec2(min(i, Nx - 1), Nr - 1);
+    if (!solidAt(c)) {
+      Prim t = interior(c);
+      float cs = sqrt(uGamma * t.w.w / t.w.x);
+      if (t.w.z >= cs) q = t;
+      else if (t.w.z > 0.0) { q = t; q.w.w = uAmb.w; }
+    }
+  } else if (i >= Nx) {
+    // right: supersonic / subsonic outflow
+    ivec2 c = ivec2(Nx - 1, j);
+    if (!solidAt(c)) {
+      Prim t = interior(c);
+      float cs = sqrt(uGamma * t.w.w / t.w.x);
+      if (t.w.y >= cs) q = t;
+      else if (t.w.y > 0.0) { q = t; q.w.w = uAmb.w; }
+      else q.w.y = max(q.w.y, 0.0);
+    }
+  } else {
+    if (solidAt(ivec2(i, j))) wall = true; else q = interior(ivec2(i, j));
+  }
+  if (wall) { oW = vec4(-1.0, 0.0, 0.0, 1.0); oWb = vec4(0.0); return; }
+  if (mir) q.w.z = -q.w.z;           // axis of symmetry
+  oW = q.w; oWb = vec4(q.y, 0.0, 0.0, 0.0);
+}
+`;
+
+// ---------------------------------------------------------------------------
+// Flux passes (one small program per direction).
+//   x-pass: pixel (i,j) of an (Nx+1) x Nr target -> flux through the WEST face of cell (i,j)
+//   r-pass: pixel (i,j) of an Nx x (Nr+1) target -> flux through the SOUTH face of cell (i,j)
+// ---------------------------------------------------------------------------
+function makeFluxShader(dirR) { return GLSL_COMMON + `
+#define DIR_R ${dirR ? 1 : 0}
+uniform sampler2D uGeoA;    // (V, Am, Ax_west, Ar_south); negative area => first order
+uniform sampler2D uW;       // padded primitive (rho, u, v, p); rho < 0 marks a wall cell
+uniform sampler2D uWb;      // padded (Y, 0, 0, 0)
+uniform float uLimiter;     // 0 = first order, 1 = second order
+uniform float uHllBlend;    // sensitivity of HLL blending (0 disables)
+layout(location = 0) out vec4 oF;
+layout(location = 1) out vec4 oFY;
+
+Prim cellP(int i, int j, out bool s) {
+  ivec2 c = ivec2(i + 2, j + 2);
+  vec4 w = texelFetch(uW, c, 0);
+  s = w.x < 0.0;
+  Prim q = Prim(w, texelFetch(uWb, c, 0).r);
+#if DIR_R
+  q.w.yz = q.w.zy;          // face-normal frame: normal velocity in .y
+#endif
+  return q;
+}
+float pAt(int i, int j, float fb) { vec4 w = texelFetch(uW, ivec2(i + 2, j + 2), 0); return w.x < 0.0 ? fb : w.w; }
+Prim mirrorN(Prim q) { q.w.y = -q.w.y; return q; }
+vec4 vanLeer(vec4 a, vec4 b) {
+  vec4 ab = a * b, den = a + b;
+  den = mix(den, vec4(1.0), step(abs(den), vec4(1e-30)));
+  return 2.0 * max(ab, vec4(0.0)) / den;
+}
+float vanLeer1(float a, float b) { float ab = a * b; return ab > 0.0 ? 2.0 * ab / (a + b) : 0.0; }
+float jumpRatio(float a, float b) { return abs(a - b) / min(a, b); }
+
+void main() {
+  ivec2 ij = ivec2(gl_FragCoord.xy);
+  int i = ij.x, j = ij.y;
+  oF = vec4(0.0); oFY = vec4(0.0);
+  vec4 geo = texelFetch(uGeoA, ij, 0);
+#if DIR_R
+  float area = geo.w;
+  if (j == 0 || area == 0.0) return;
+  ivec2 d = ivec2(0, 1), t = ivec2(1, 0);
+#else
+  float area = geo.z;
+  if (area == 0.0) return;
+  ivec2 d = ivec2(1, 0), t = ivec2(0, 1);
+#endif
+  bool s0, s1, s2, s3;
+  ivec2 k0 = ij - 2 * d, k1 = ij - d, k3 = ij + d;
+  Prim c0 = cellP(k0.x, k0.y, s0), c1 = cellP(k1.x, k1.y, s1);
+  Prim c2 = cellP(i, j, s2), c3 = cellP(k3.x, k3.y, s3);
+  if (s1 && s2) return;
+  // HLL blending near strong shocks lying across the face direction (anti-carbuncle)
+  float hllw = 0.0;
+  if (uHllBlend > 0.0 && !(s1 || s2)) {
+    float p1 = c1.w.w, p2 = c2.w.w;
+    ivec2 a1 = k1 + t, b1 = k1 - t, a2 = ij + t, b2 = ij - t;
+    float jm = max(max(jumpRatio(pAt(a1.x, a1.y, p1), p1), jumpRatio(pAt(b1.x, b1.y, p1), p1)),
+                   max(jumpRatio(pAt(a2.x, a2.y, p2), p2), jumpRatio(pAt(b2.x, b2.y, p2), p2)));
+    hllw = smoothstep(0.15, 0.6, jm * uHllBlend);
+  }
+  Prim WL, WR;
+  if (s1) { WR = c2; WL = mirrorN(c2); }
+  else if (s2) { WL = c1; WR = mirrorN(c1); }
+  else {
+    if (s0) c0 = mirrorN(c1);
+    if (s3) c3 = mirrorN(c2);
+    WL = c1; WR = c2;
+    if (uLimiter > 0.5 && area > 0.0) {
+      vec4 dL = vanLeer(c1.w - c0.w, c2.w - c1.w);
+      vec4 dR = vanLeer(c2.w - c1.w, c3.w - c2.w);
+      float yL = vanLeer1(c1.y - c0.y, c2.y - c1.y);
+      float yR = vanLeer1(c2.y - c1.y, c3.y - c2.y);
+      vec4 tL = c1.w + 0.5 * dL, tR = c2.w - 0.5 * dR;
+      if (tL.x > 0.0 && tL.w > 0.0 && tR.x > 0.0 && tR.w > 0.0) {
+        WL = Prim(tL, clamp(c1.y + 0.5 * yL, 0.0, 1.0));
+        WR = Prim(tR, clamp(c2.y - 0.5 * yR, 0.0, 1.0));
+      }
+    }
+  }
+  // ---- HLLC Riemann solver (blended to HLL by hllw), face-normal frame
+  float g = uGamma;
+  float rL = WL.w.x, uL = WL.w.y, vL = WL.w.z, pL = WL.w.w;
+  float rR = WR.w.x, uR = WR.w.y, vR = WR.w.z, pR = WR.w.w;
+  float cL = sqrt(g * pL / rL), cR = sqrt(g * pR / rR);
+  float EL = pL / (g - 1.0) + 0.5 * rL * (uL * uL + vL * vL);
+  float ER = pR / (g - 1.0) + 0.5 * rR * (uR * uR + vR * vR);
+  float sL = sqrt(rL), sR = sqrt(rR);
+  float uT = (sL * uL + sR * uR) / (sL + sR);
+  float HT = (sL * (EL + pL) / rL + sR * (ER + pR) / rR) / (sL + sR);
+  float vT = (sL * vL + sR * vR) / (sL + sR);
+  float cT = sqrt(max((g - 1.0) * (HT - 0.5 * (uT * uT + vT * vT)), 1e-12));
+  float SL = min(uL - cL, uT - cT);
+  float SR = max(uR + cR, uT + cT);
+  vec4 FL = vec4(rL * uL, rL * uL * uL + pL, rL * uL * vL, uL * (EL + pL));
+  vec4 FR = vec4(rR * uR, rR * uR * uR + pR, rR * uR * vR, uR * (ER + pR));
+  float FYL = rL * uL * WL.y, FYR = rR * uR * WR.y;
+  vec4 F; float FY;
+  if (SL >= 0.0) { F = FL; FY = FYL; }
+  else if (SR <= 0.0) { F = FR; FY = FYR; }
+  else {
+    vec4 UL = vec4(rL, rL * uL, rL * vL, EL);
+    vec4 UR = vec4(rR, rR * uR, rR * vR, ER);
+    float inv = 1.0 / (SR - SL);
+    vec4 Fhll = (SR * FL - SL * FR + SL * SR * (UR - UL)) * inv;
+    float FYhll = (SR * FYL - SL * FYR + SL * SR * (rR * WR.y - rL * WL.y)) * inv;
+    float Ss = (pR - pL + rL * uL * (SL - uL) - rR * uR * (SR - uR)) / (rL * (SL - uL) - rR * (SR - uR));
+    bool left = Ss >= 0.0;
+    float rK = left ? rL : rR, uK = left ? uL : uR, vK = left ? vL : vR, pK = left ? pL : pR;
+    float EK = left ? EL : ER, SK = left ? SL : SR, YK = left ? WL.y : WR.y;
+    vec4 FK = left ? FL : FR, UK = left ? UL : UR;
+    float FYK = left ? FYL : FYR;
+    float kk = rK * (SK - uK) / (SK - Ss);
+    vec4 Us = kk * vec4(1.0, Ss, vK, EK / rK + (Ss - uK) * (Ss + pK / (rK * (SK - uK))));
+    vec4 Fc = FK + SK * (Us - UK);
+    float FYc = FYK + SK * (kk * YK - rK * YK);
+    F = mix(Fc, Fhll, hllw);
+    FY = mix(FYc, FYhll, hllw);
+  }
+#if DIR_R
+  F = vec4(F.x, F.z, F.y, F.w);       // rotate momentum back to (x, r)
+#endif
+  oF = F; oFY = vec4(FY, 0.0, 0.0, 0.0);
+}
+`; }
+const FS_FLUX_X = makeFluxShader(false);
+const FS_FLUX_R = makeFluxShader(true);
+
+// ---------------------------------------------------------------------------
+// Update pass: finite-volume update with axisymmetric geometric source.
+// ---------------------------------------------------------------------------
+const FS_UPDATE = GLSL_COMMON + `
+uniform sampler2D uA;     // state at this stage
+uniform sampler2D uB;
+uniform sampler2D uA0;    // state at t^n (used in stage 2)
+uniform sampler2D uB0;
+uniform sampler2D uFxA; uniform sampler2D uFxB;
+uniform sampler2D uFrA; uniform sampler2D uFrB;
+uniform sampler2D uGeoA;  // (V, Am, Ax_west, Ar_south)
+uniform sampler2D uGeoG;  // group (V, Am, Wx, Wr)
+uniform sampler2D uGeoM;  // (host dx, host dy, slave mask, kappa)
+uniform sampler2D uStep;
+uniform int uStage;       // 1 or 2
+uniform vec4 uAmbCons;    // conserved freestream state written into solid cells
+uniform float uVmax;      // velocity clamp (normalised)
+layout(location = 0) out vec4 oA;
+layout(location = 1) out vec4 oB;
+
+// net flux (r-weighted areas) out of one member cell
+void memberFlux(ivec2 c, inout vec4 L, inout float LY) {
+  vec4 g = texelFetch(uGeoA, c, 0);
+  float aw = abs(g.z), ae = abs(texelFetch(uGeoA, c + ivec2(1, 0), 0).z);
+  float as_ = abs(g.w), an = abs(texelFetch(uGeoA, c + ivec2(0, 1), 0).w);
+  L  -= ae * texelFetch(uFxA, c + ivec2(1, 0), 0) - aw * texelFetch(uFxA, c, 0);
+  L  -= an * texelFetch(uFrA, c + ivec2(0, 1), 0) - as_ * texelFetch(uFrA, c, 0);
+  LY -= ae * texelFetch(uFxB, c + ivec2(1, 0), 0).r - aw * texelFetch(uFxB, c, 0).r;
+  LY -= an * texelFetch(uFrB, c + ivec2(0, 1), 0).r - as_ * texelFetch(uFrB, c, 0).r;
+}
+// pressure on a slip wall from the reflected Riemann problem
+float wallPressure(Prim q, float un) {
+  float g = uGamma, p = q.w.w, rho = q.w.x, c = sqrt(g * p / rho);
+  if (un > 0.0) { float a = 0.25 * (g + 1.0) * un; return p + rho * un * (a + sqrt(a * a + c * c)); }
+  float f = max(1.0 + 0.5 * (g - 1.0) * un / c, 0.0);
+  return p * pow(f, 2.0 * g / (g - 1.0));
+}
+
+void main() {
+  ivec2 ij = ivec2(gl_FragCoord.xy);
+  if (solidAt(ij)) { oA = uAmbCons; oB = vec4(0.0); return; }
+  vec4 gm = texelFetch(uGeoM, ij, 0);
+  ivec2 H = ij + ivec2(round(gm.xy));
+  vec4 gg = texelFetch(uGeoG, ij, 0);
+  vec4 A = texelFetch(uA, H, 0);
+  float B = texelFetch(uB, H, 0).r;
+  Prim q = toPrim(A, B);
+  vec4 L = vec4(0.0); float LY = 0.0;
+  memberFlux(H, L, LY);
+  int sm = int(round(texelFetch(uGeoM, H, 0).z));
+  if ((sm & 1) != 0) memberFlux(H + ivec2(-1, 0), L, LY);
+  if ((sm & 2) != 0) memberFlux(H + ivec2(1, 0), L, LY);
+  if ((sm & 4) != 0) memberFlux(H + ivec2(0, -1), L, LY);
+  if ((sm & 8) != 0) memberFlux(H + ivec2(0, 1), L, LY);
+  // embedded wall: pressure force along the (r-weighted) wall vector
+  vec2 Wv = gg.zw;
+  float wl = length(Wv);
+  if (wl > 1e-6) {
+    vec2 n = Wv / wl;
+    float pw = wallPressure(q, dot(q.w.yz, n));
+    L.yz -= Wv * pw;
+  }
+  L.z += q.w.w * gg.y;             // axisymmetric geometric source  p * Am
+  float invV = 1.0 / max(gg.x, 1e-6);
+  float dt = texelFetch(uStep, ivec2(0), 0).x;
+  vec4 U; float UY;
+  if (uStage == 1) { U = A + dt * invV * L; UY = B + dt * invV * LY; }
+  else {
+    vec4 A0 = texelFetch(uA0, H, 0); float B0 = texelFetch(uB0, H, 0).r;
+    U = 0.5 * (A0 + A + dt * invV * L); UY = 0.5 * (B0 + B + dt * invV * LY);
+  }
+  // positivity / robustness fixes
+  float rho = max(U.x, RHO_MIN);
+  vec2 vel = U.yz / max(U.x, RHO_MIN);
+  float sp = length(vel);
+  if (sp > uVmax) vel *= uVmax / sp;
+  if (!(rho < 1e30) || !(vel.x < 1e30 && vel.x > -1e30)) { oA = uAmbCons; oB = vec4(0.0); return; } // NaN guard
+  float ke = 0.5 * rho * dot(vel, vel);
+  float E = max(U.w, P_MIN / (uGamma - 1.0) + ke);
+  oA = vec4(rho, rho * vel, E);
+  oB = vec4(clamp(UY, 0.0, rho), 0.0, 0.0, 0.0);
+}
+`;
+
+// ---------------------------------------------------------------------------
+// Reduction passes for the CFL wave speed and the step info texture.
+// ---------------------------------------------------------------------------
+const FS_REDUCE1 = GLSL_COMMON + `
+uniform sampler2D uA;
+out vec4 o;
+void main() {
+  ivec2 b = ivec2(gl_FragCoord.xy) * 4;
+  float w = 0.0;
+  for (int dy = 0; dy < 4; dy++) for (int dx = 0; dx < 4; dx++) {
+    ivec2 c = b + ivec2(dx, dy);
+    if (c.x < uN.x && c.y < uN.y && !solidAt(c)) {
+      Prim q = toPrim(texelFetch(uA, c, 0), 0.0);
+      w = max(w, abs(q.w.y) + abs(q.w.z) + 2.0 * sqrt(uGamma * q.w.w / q.w.x));
+    }
+  }
+  o = vec4(w, 0.0, 0.0, 0.0);
+}
+`;
+const FS_REDUCE2 = `#version 300 es
+precision highp float; precision highp int; precision highp sampler2D;
+uniform sampler2D uIn; uniform ivec2 uInSize;
+out vec4 o;
+void main() {
+  ivec2 b = ivec2(gl_FragCoord.xy) * 4;
+  float w = 0.0;
+  for (int dy = 0; dy < 4; dy++) for (int dx = 0; dx < 4; dx++) {
+    ivec2 c = b + ivec2(dx, dy);
+    if (c.x < uInSize.x && c.y < uInSize.y) w = max(w, texelFetch(uIn, c, 0).r);
+  }
+  o = vec4(w, 0.0, 0.0, 0.0);
+}
+`;
+const FS_STEPINFO = `#version 300 es
+precision highp float; precision highp int; precision highp sampler2D;
+uniform sampler2D uIn;
+uniform sampler2D uPrev;
+uniform float uCFL; uniform float uDtMax; uniform float uWfloor;
+out vec4 o;
+void main() {
+  float w = max(uWfloor, texelFetch(uIn, ivec2(0), 0).r);
+  vec4 prev = texelFetch(uPrev, ivec2(0), 0);
+  float dt = min(uCFL / w, uDtMax);
+  if (prev.x > 0.0) dt = min(dt, prev.x * 1.2);
+  o = vec4(dt, prev.z, prev.z + dt, w);
+}
+`;
+
+// ---------------------------------------------------------------------------
+// Ambient rescale: when altitude / flight speed change, pure-ambient cells
+// (exhaust fraction < threshold) are rescaled so the change is felt at once
+// instead of waiting for waves to cross the whole domain.
+// ---------------------------------------------------------------------------
+const FS_RESCALE = GLSL_COMMON + `
+uniform sampler2D uA; uniform sampler2D uB;
+uniform vec4 uScale;      // (pressure factor, temperature factor, delta u, Y threshold)
+uniform vec4 uAmbCons;
+layout(location = 0) out vec4 oA;
+layout(location = 1) out vec4 oB;
+void main() {
+  ivec2 ij = ivec2(gl_FragCoord.xy);
+  vec4 A = texelFetch(uA, ij, 0); float B = texelFetch(uB, ij, 0).r;
+  if (solidAt(ij)) { oA = uAmbCons; oB = vec4(0.0); return; }
+  Prim q = toPrim(A, B);
+  float w = 1.0 - smoothstep(0.0, uScale.w, q.y);
+  float rho = q.w.x * mix(1.0, uScale.x / uScale.y, w);
+  float p = q.w.w * mix(1.0, uScale.x, w);
+  vec2 vel = q.w.yz + vec2(uScale.z * w, 0.0);
+  oA = vec4(rho, rho * vel, p / (uGamma - 1.0) + 0.5 * rho * dot(vel, vel));
+  oB = vec4(rho * q.y, 0.0, 0.0, 0.0);
+}
+`;
+
+// ---------------------------------------------------------------------------
+class GPUSolver {
+  constructor(gl) {
+    this.gl = gl;
+    if (!gl.getExtension('EXT_color_buffer_float')) throw new Error('EXT_color_buffer_float not supported');
+    this.progFluxX = this._program(VS_QUAD, FS_FLUX_X);
+    this.progFluxR = this._program(VS_QUAD, FS_FLUX_R);
+    this.progPrim = this._program(VS_QUAD, FS_PRIM);
+    this.progUpdate = this._program(VS_QUAD, FS_UPDATE);
+    this.progRed1 = this._program(VS_QUAD, FS_REDUCE1);
+    this.progRed2 = this._program(VS_QUAD, FS_REDUCE2);
+    this.progStep = this._program(VS_QUAD, FS_STEPINFO);
+    this.progRescale = this._program(VS_QUAD, FS_RESCALE);
+    const vbo = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, vbo);
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 3, -1, -1, 3]), gl.STATIC_DRAW);
+    this.vao = gl.createVertexArray();
+    gl.bindVertexArray(this.vao);
+    gl.enableVertexAttribArray(0);
+    gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
+    gl.bindVertexArray(null);
+    this.Nx = 0; this.Nr = 0;
+    this.stepCount = 0;
+  }
+
+  _shader(type, src) {
+    const gl = this.gl, s = gl.createShader(type);
+    gl.shaderSource(s, src); gl.compileShader(s);
+    if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) {
+      const log = gl.getShaderInfoLog(s);
+      const lines = src.split('\n').map((l, k) => (k + 1) + ': ' + l).join('\n');
+      console.error(log + '\n' + lines);
+      throw new Error('Shader compile error: ' + log);
+    }
+    return s;
+  }
+  _program(vs, fs) {
+    const gl = this.gl, p = gl.createProgram();
+    gl.attachShader(p, this._shader(gl.VERTEX_SHADER, vs));
+    gl.attachShader(p, this._shader(gl.FRAGMENT_SHADER, fs));
+    gl.bindAttribLocation(p, 0, 'aPos');
+    gl.linkProgram(p);
+    if (!gl.getProgramParameter(p, gl.LINK_STATUS)) throw new Error('Link error: ' + gl.getProgramInfoLog(p));
+    const uniforms = {};
+    const n = gl.getProgramParameter(p, gl.ACTIVE_UNIFORMS);
+    for (let k = 0; k < n; k++) {
+      const info = gl.getActiveUniform(p, k);
+      uniforms[info.name] = gl.getUniformLocation(p, info.name);
+    }
+    return { p, u: uniforms };
+  }
+  _tex(w, h, internal, format, type, data = null) {
+    const gl = this.gl, t = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, t);
+    gl.texImage2D(gl.TEXTURE_2D, 0, internal, w, h, 0, format, type, data);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    return t;
+  }
+  _fbo(texs) {
+    const gl = this.gl, f = gl.createFramebuffer();
+    gl.bindFramebuffer(gl.FRAMEBUFFER, f);
+    texs.forEach((t, k) => gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0 + k, gl.TEXTURE_2D, t, 0));
+    gl.drawBuffers(texs.map((_, k) => gl.COLOR_ATTACHMENT0 + k));
+    const st = gl.checkFramebufferStatus(gl.FRAMEBUFFER);
+    if (st !== gl.FRAMEBUFFER_COMPLETE) throw new Error('FBO incomplete: ' + st);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    return f;
+  }
+  _free() {
+    const gl = this.gl;
+    for (const t of this._texList || []) gl.deleteTexture(t);
+    for (const f of this._fboList || []) gl.deleteFramebuffer(f);
+    this._texList = []; this._fboList = [];
+  }
+
+  resize(Nx, Nr) {
+    const gl = this.gl;
+    this.cancelAsync();
+    this._free();
+    this.Nx = Nx; this.Nr = Nr;
+    const T = (w, h) => { const t = this._tex(w, h, gl.RGBA32F, gl.RGBA, gl.FLOAT); this._texList.push(t); return t; };
+    const F = (ts) => { const f = this._fbo(ts); this._fboList.push(f); return f; };
+    this.S = [0, 1, 2].map(() => { const A = T(Nx, Nr), B = T(Nx, Nr); return { A, B, fbo: F([A, B]) }; });
+    this.flux = { FxA: T(Nx + 1, Nr + 1), FxB: T(Nx + 1, Nr + 1), FrA: T(Nx + 1, Nr + 1), FrB: T(Nx + 1, Nr + 1) };
+    this.flux.fboX = F([this.flux.FxA, this.flux.FxB]);
+    this.flux.fboR = F([this.flux.FrA, this.flux.FrB]);
+    this.prim = { W: T(Nx + 4, Nr + 4), Wb: T(Nx + 4, Nr + 4) };
+    this.prim.fbo = F([this.prim.W, this.prim.Wb]);
+    // CFL reduction chain: 4x4 blocks per level down to a single texel
+    this.red = [];
+    let w = Nx, h = Nr;
+    do { w = Math.ceil(w / 4); h = Math.ceil(h / 4); const t = T(w, h); this.red.push({ t, fbo: F([t]), w, h }); } while (w > 1 || h > 1);
+    this.stepTex = [T(1, 1), T(1, 1)];
+    this.stepFbo = this.stepTex.map(t => F([t]));
+    this.stepIdx = 0;
+    this.mask = this._tex(Nx, Nr, gl.R8, gl.RED, gl.UNSIGNED_BYTE);
+    this._texList.push(this.mask);
+    this.geoA = T(Nx + 1, Nr + 1); this.geoG = T(Nx, Nr); this.geoM = T(Nx, Nr);
+    this.cur = 0;
+    this.readFbo = gl.createFramebuffer(); this._fboList.push(this.readFbo);
+  }
+
+  setMask(u8) {
+    const gl = this.gl;
+    gl.bindTexture(gl.TEXTURE_2D, this.mask);
+    gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
+    const up = new Uint8Array(u8.length);
+    for (let k = 0; k < u8.length; k++) up[k] = u8[k] ? 255 : 0;   // R8 is normalised: 255 -> 1.0
+    gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, this.Nx, this.Nr, gl.RED, gl.UNSIGNED_BYTE, up);
+    this.maskData = u8;
+  }
+
+  setGeometry(geo) {
+    const gl = this.gl;
+    this.setMask(geo.mask);
+    gl.bindTexture(gl.TEXTURE_2D, this.geoA);
+    gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, this.Nx + 1, this.Nr + 1, gl.RGBA, gl.FLOAT, geo.geoA);
+    gl.bindTexture(gl.TEXTURE_2D, this.geoG);
+    gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, this.Nx, this.Nr, gl.RGBA, gl.FLOAT, geo.geoG);
+    gl.bindTexture(gl.TEXTURE_2D, this.geoM);
+    gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, this.Nx, this.Nr, gl.RGBA, gl.FLOAT, geo.geoM);
+  }
+
+  setState(A, B) {
+    const gl = this.gl;
+    for (const s of this.S) {
+      gl.bindTexture(gl.TEXTURE_2D, s.A);
+      gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, this.Nx, this.Nr, gl.RGBA, gl.FLOAT, A);
+      gl.bindTexture(gl.TEXTURE_2D, s.B);
+      gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, this.Nx, this.Nr, gl.RGBA, gl.FLOAT, B);
+    }
+    const z = new Float32Array(4);
+    for (const t of this.stepTex) { gl.bindTexture(gl.TEXTURE_2D, t); gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, 1, 1, gl.RGBA, gl.FLOAT, z); }
+    this.cur = 0; this.stepIdx = 0; this.stepCount = 0;
+  }
+
+  _bindTex(prog, name, tex, unit) {
+    const gl = this.gl;
+    gl.activeTexture(gl.TEXTURE0 + unit);
+    gl.bindTexture(gl.TEXTURE_2D, tex);
+    if (prog.u[name] !== undefined) gl.uniform1i(prog.u[name], unit);
+  }
+  _draw(fbo, w, h) {
+    const gl = this.gl;
+    gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
+    gl.viewport(0, 0, w, h);
+    gl.drawArrays(gl.TRIANGLES, 0, 3);
+  }
+  _common(prog, P) {
+    const gl = this.gl;
+    gl.useProgram(prog.p);
+    if (prog.u.uN) gl.uniform2i(prog.u.uN, this.Nx, this.Nr);
+    if (prog.u.uGamma) gl.uniform1f(prog.u.uGamma, P.gamma);
+  }
+
+  // P = normalised parameters (see app.js: simParams())
+  step(n, P) {
+    const gl = this.gl;
+    gl.bindVertexArray(this.vao);
+    gl.disable(gl.BLEND);
+    for (let k = 0; k < n; k++) {
+      const S0 = this.S[this.cur], S1 = this.S[(this.cur + 1) % 3], S2 = this.S[(this.cur + 2) % 3];
+      // ---- CFL reduction -> step info
+      let pr = this.progRed1; this._common(pr, P);
+      this._bindTex(pr, 'uA', S0.A, 0); this._bindTex(pr, 'uMask', this.mask, 1);
+      this._draw(this.red[0].fbo, this.red[0].w, this.red[0].h);
+      pr = this.progRed2; gl.useProgram(pr.p);
+      for (let l = 1; l < this.red.length; l++) {
+        this._bindTex(pr, 'uIn', this.red[l - 1].t, 0); gl.uniform2i(pr.u.uInSize, this.red[l - 1].w, this.red[l - 1].h);
+        this._draw(this.red[l].fbo, this.red[l].w, this.red[l].h);
+      }
+      pr = this.progStep; gl.useProgram(pr.p);
+      this._bindTex(pr, 'uIn', this.red[this.red.length - 1].t, 0);
+      this._bindTex(pr, 'uPrev', this.stepTex[this.stepIdx], 1);
+      gl.uniform1f(pr.u.uCFL, P.cfl); gl.uniform1f(pr.u.uDtMax, P.dtMax); gl.uniform1f(pr.u.uWfloor, P.wFloor);
+      this._draw(this.stepFbo[1 - this.stepIdx], 1, 1);
+      this.stepIdx = 1 - this.stepIdx;
+      const stepTex = this.stepTex[this.stepIdx];
+      // ---- RK stage 1:  S1 = S0 + dt L(S0)
+      this._fluxPass(S0, stepTex, 1, P);
+      this._updatePass(S0, S0, stepTex, 1, S1, P);
+      // ---- RK stage 2:  S2 = 0.5 (S0 + S1 + dt L(S1))
+      this._fluxPass(S1, stepTex, 2, P);
+      this._updatePass(S1, S0, stepTex, 2, S2, P);
+      this.cur = (this.cur + 2) % 3;
+      this.stepCount++;
+      gl.flush();          // keep GPU command batches small (avoids driver watchdog resets)
+    }
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+  }
+
+  _fluxPass(S, stepTex, timeSel, P) {
+    const gl = this.gl;
+    // padded primitive variables + boundary ghost cells
+    const pp = this.progPrim;
+    this._common(pp, P);
+    this._bindTex(pp, 'uA', S.A, 0); this._bindTex(pp, 'uB', S.B, 1); this._bindTex(pp, 'uMask', this.mask, 2);
+    this._bindTex(pp, 'uStep', stepTex, 3);
+    gl.uniform1i(pp.u.uTimeSel, timeSel);
+    gl.uniform4fv(pp.u.uAmb, P.amb);
+    gl.uniform3fv(pp.u.uRes, P.res);
+    gl.uniform1f(pp.u.uPambStart, P.pStart);
+    gl.uniform1f(pp.u.uRamp, P.ramp);
+    gl.uniform1f(pp.u.uRcCells, P.RcCells);
+    this._draw(this.prim.fbo, this.Nx + 4, this.Nr + 4);
+    for (const dirR of [false, true]) {
+      const pr = dirR ? this.progFluxR : this.progFluxX;
+      this._common(pr, P);
+      this._bindTex(pr, 'uW', this.prim.W, 0); this._bindTex(pr, 'uWb', this.prim.Wb, 1);
+      this._bindTex(pr, 'uGeoA', this.geoA, 2);
+      gl.uniform1f(pr.u.uLimiter, P.order2 ? 1 : 0);
+      gl.uniform1f(pr.u.uHllBlend, P.hllBlend);
+      if (dirR) this._draw(this.flux.fboR, this.Nx, this.Nr + 1);
+      else this._draw(this.flux.fboX, this.Nx + 1, this.Nr);
+    }
+  }
+  _updatePass(S, S0, stepTex, stage, out, P) {
+    const gl = this.gl, pr = this.progUpdate;
+    this._common(pr, P);
+    this._bindTex(pr, 'uA', S.A, 0); this._bindTex(pr, 'uB', S.B, 1);
+    this._bindTex(pr, 'uA0', S0.A, 2); this._bindTex(pr, 'uB0', S0.B, 3);
+    this._bindTex(pr, 'uFxA', this.flux.FxA, 4); this._bindTex(pr, 'uFxB', this.flux.FxB, 5);
+    this._bindTex(pr, 'uFrA', this.flux.FrA, 6); this._bindTex(pr, 'uFrB', this.flux.FrB, 7);
+    this._bindTex(pr, 'uStep', stepTex, 8); this._bindTex(pr, 'uMask', this.mask, 9);
+    this._bindTex(pr, 'uGeoA', this.geoA, 10); this._bindTex(pr, 'uGeoG', this.geoG, 11); this._bindTex(pr, 'uGeoM', this.geoM, 12);
+    gl.uniform1i(pr.u.uStage, stage);
+    gl.uniform4fv(pr.u.uAmbCons, P.ambCons);
+    gl.uniform1f(pr.u.uVmax, P.vMax);
+    this._draw(out.fbo, this.Nx, this.Nr);
+  }
+
+  rescaleAmbient(fp, fT, du, P) {
+    const gl = this.gl, pr = this.progRescale;
+    gl.bindVertexArray(this.vao);
+    this._common(pr, P);
+    const S0 = this.S[this.cur], S1 = this.S[(this.cur + 1) % 3];
+    this._bindTex(pr, 'uA', S0.A, 0); this._bindTex(pr, 'uB', S0.B, 1); this._bindTex(pr, 'uMask', this.mask, 2);
+    gl.uniform4f(pr.u.uScale, fp, fT, du, 0.03);
+    gl.uniform4fv(pr.u.uAmbCons, P.ambCons);
+    this._draw(S1.fbo, this.Nx, this.Nr);
+    this.cur = (this.cur + 1) % 3;
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+  }
+
+  get state() { return this.S[this.cur]; }
+  get stepInfoTex() { return this.stepTex[this.stepIdx]; }
+
+  // ---- read-back helpers (synchronous; call sparingly)
+  _readRect(tex, x, y, w, h) {
+    const gl = this.gl;
+    gl.bindFramebuffer(gl.FRAMEBUFFER, this.readFbo);
+    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, tex, 0);
+    gl.readBuffer(gl.COLOR_ATTACHMENT0);
+    const out = new Float32Array(w * h * 4);
+    gl.readPixels(x, y, w, h, gl.RGBA, gl.FLOAT, out);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    return out;
+  }
+  // ---- asynchronous read-back (pixel-pack buffer + fence): never stalls the GPU.
+  // reqs: [{ name, tex, x, y, w, h }]. Returns false if a read is still in flight.
+  requestAsync(reqs, tag) {
+    const gl = this.gl;
+    if (this._async) return false;
+    let floats = 0;
+    const offs = reqs.map(r => { const o = floats; floats += r.w * r.h * 4; return o; });
+    const pbo = gl.createBuffer();          // fresh buffer per read keeps the browser's fast read-back path
+    gl.bindBuffer(gl.PIXEL_PACK_BUFFER, pbo);
+    gl.bufferData(gl.PIXEL_PACK_BUFFER, floats * 4, gl.STREAM_READ);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, this.readFbo);
+    reqs.forEach((r, k) => {
+      gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, r.tex, 0);
+      gl.readBuffer(gl.COLOR_ATTACHMENT0);
+      gl.readPixels(r.x, r.y, r.w, r.h, gl.RGBA, gl.FLOAT, offs[k] * 4);
+    });
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    gl.bindBuffer(gl.PIXEL_PACK_BUFFER, null);
+    const fence = gl.fenceSync(gl.SYNC_GPU_COMMANDS_COMPLETE, 0);
+    gl.flush();
+    this._async = { fence, reqs, offs, floats, tag, pbo };
+    return true;
+  }
+  // Returns { tag, data: { name: Float32Array } } once the GPU has finished, else null.
+  pollAsync() {
+    const gl = this.gl, a = this._async;
+    if (!a) return null;
+    const st = gl.getSyncParameter(a.fence, gl.SYNC_STATUS);
+    if (st !== gl.SIGNALED) return null;
+    gl.deleteSync(a.fence);
+    const all = new Float32Array(a.floats);
+    gl.bindBuffer(gl.PIXEL_PACK_BUFFER, a.pbo);
+    gl.getBufferSubData(gl.PIXEL_PACK_BUFFER, 0, all);
+    gl.bindBuffer(gl.PIXEL_PACK_BUFFER, null);
+    gl.deleteBuffer(a.pbo);
+    this._async = null;
+    const data = {};
+    a.reqs.forEach((r, k) => { data[r.name] = all.subarray(a.offs[k], a.offs[k] + r.w * r.h * 4); });
+    return { tag: a.tag, data, probe: a.probe };
+  }
+  cancelAsync() {
+    if (!this._async) return;
+    try { this.gl.deleteSync(this._async.fence); this.gl.deleteBuffer(this._async.pbo); } catch (e) {}
+    this._async = null;
+  }
+
+  readStepInfo() { return this._readRect(this.stepInfoTex, 0, 0, 1, 1); }
+  readColumn(i) { return { A: this._readRect(this.state.A, i, 0, 1, this.Nr), B: this._readRect(this.state.B, i, 0, 1, this.Nr) }; }
+  readCell(i, j) { return { A: this._readRect(this.state.A, i, j, 1, 1), B: this._readRect(this.state.B, i, j, 1, 1) }; }
+  readAll() { return { A: this._readRect(this.state.A, 0, 0, this.Nx, this.Nr), B: this._readRect(this.state.B, 0, 0, this.Nx, this.Nr) }; }
+}
+
+if (typeof module !== 'undefined') module.exports = { GPUSolver, GLSL_COMMON, VS_QUAD };
+
+// ===== simsetup.js =====
+// ============================================================================
+// simsetup.js — turns user-facing engine parameters into a grid, wall mask,
+// initial condition and the normalised parameter block used by the solver.
+// ============================================================================
+'use strict';
+
+function buildSimSetup(cfg) {
+  // cfg (SI): Dt, De, type, bellPct, coneAngle, CR, chamberLen, Pc, Tc, gamma, Mw,
+  //           alt (m), mach, base (bool), bodyRatio, domainL (m), Nx, aspect, startMode, rampMs
+  const Nx = cfg.Nx;
+  const Nr = Math.max(16, Math.round(Nx * cfg.aspect));
+  const contour = buildContour(cfg);
+  // Snap the cell size so the throat radius is a whole number of cells: the
+  // stepped wall then reproduces the true throat area (and hence mass flow).
+  // On a live re-mesh the existing spacing is kept (cfg.dx).
+  let dx = cfg.domainL / Nx;
+  if (cfg.dx) dx = cfg.dx;
+  else { const nt = Math.max(3, Math.round(contour.Rt / dx)); dx = contour.Rt / nt; }
+  const atm = atmosphere(cfg.alt);
+  const g = cfg.gamma;
+  const Re_gas = RU / cfg.Mw;
+  const theory = nozzleTheory({ Pc: cfg.Pc, Tc: cfg.Tc, gamma: g, Mw: cfg.Mw, Dt: cfg.Dt, De: cfg.De, pa: atm.p });
+
+  // ---------------- wall mask ----------------
+  const tw = Math.max(2.6 * dx, 0.12 * contour.Rt);
+  const bodyR = cfg.base ? Math.max(contour.Rc, contour.Re) * (cfg.bodyRatio || 1.5) + tw : 0;
+  const xBase = contour.xt;
+  const RinCol = new Float32Array(Nx);
+  for (let i = 0; i < Nx; i++) {
+    const x = (i + 0.5) * dx;
+    RinCol[i] = x <= contour.xe ? contour.radiusAt(x) : Infinity;
+  }
+  const geo = buildCutGeometry({ Nx, Nr, dx, contour, tw, base: cfg.base, xBase, bodyR, mode: cfg.wallModel || 'cut' });
+  const mask = geo.mask;
+
+  // ---------------- normalised parameters ----------------
+  const tScale = dx / U_REF;                    // seconds per grid time unit
+  const P = computeParams(cfg, contour, dx, cfg.Pc, atm.p);
+  const pa = P.amb[3], rhoa = P.amb[0];
+  const ReN = P.ReN, TcN = P.res[1], PcN = P.res[0];
+
+  // ---------------- initial condition ----------------
+  function initialState() {
+    const A = new Float32Array(Nx * Nr * 4), B = new Float32Array(Nx * Nr * 4);
+    const rho0 = PcN / (ReN * TcN);
+    const E0 = PcN / (g - 1);
+    for (let j = 0; j < Nr; j++) {
+      const r = (j + 0.5) * dx;
+      for (let i = 0; i < Nx; i++) {
+        const x = (i + 0.5) * dx, k = (j * Nx + i) * 4;
+        const inNozzle = x <= contour.xe && r < RinCol[i];
+        if (cfg.startMode === 'burst' && inNozzle && x < contour.xt) {
+          A[k] = rho0; A[k + 1] = 0; A[k + 2] = 0; A[k + 3] = E0; B[k] = rho0;
+        } else if (inNozzle) {
+          A[k] = rhoa; A[k + 1] = 0; A[k + 2] = 0; A[k + 3] = pa / (g - 1);
+        } else {
+          A[k] = P.ambCons[0]; A[k + 1] = P.ambCons[1]; A[k + 2] = 0; A[k + 3] = P.ambCons[3];
+        }
+      }
+    }
+    // merged sliver cells carry their host's state
+    for (let k = 0; k < Nx * Nr; k++) {
+      const q = k * 4, hx = geo.geoM[q], hy = geo.geoM[q + 1];
+      if (mask[k] || (hx === 0 && hy === 0)) continue;
+      const h = (k + hy * Nx + hx) * 4;
+      for (let c = 0; c < 4; c++) { A[q + c] = A[h + c]; B[q + c] = B[h + c]; }
+    }
+    return { A, B };
+  }
+
+  const iExit = Math.max(1, Math.min(Nx - 1, Math.floor(contour.xe / dx) - 1));
+  let jExit = 0;
+  while (jExit < Nr && !mask[jExit * Nx + iExit]) jExit++;
+  const iChamber = Math.max(1, Math.floor(0.5 * contour.Lc / dx));
+  const iThroat = Math.floor(contour.xt / dx);
+
+  return {
+    cfg, Nx, Nr, dx, tw, bodyR, xBase, contour, atm, theory, mask, geo, P, initialState,
+    iExit, jExit, iChamber, iThroat, tScale,
+    resolution: { throatCells: contour.Rt / dx, exitCells: contour.Re / dx },
+  };
+}
+
+// Normalised solver parameters. 'live' quantities (Pc, Tc, Mw, alt, mach) may
+// change every frame; pStartSi is the ambient pressure at ignition.
+function computeParams(cfg, contour, dx, PcSi, pStartSi) {
+  const g = cfg.gamma;
+  const atm = atmosphere(cfg.alt);
+  const pa = atm.p / P_REF;
+  const rhoa = pa / (atm.T / T_REF);           // R_air normalised = 1
+  const ca = Math.sqrt(g * pa / rhoa);
+  const uinf = cfg.mach * ca;
+  const ReN = (RU / cfg.Mw) / R_REF;
+  const TcN = cfg.Tc / T_REF;
+  const PcN = PcSi / P_REF;
+  const c0 = Math.sqrt(g * ReN * TcN);
+  const uLim = Math.sqrt(2 * g / (g - 1) * ReN * TcN);
+  const tScale = dx / U_REF;
+  return {
+    gamma: g,
+    amb: [rhoa, uinf, 0, pa],
+    ambCons: [rhoa, rhoa * uinf, 0, pa / (g - 1) + 0.5 * rhoa * uinf * uinf],
+    res: [PcN, TcN, ReN],
+    pStart: Math.min(pStartSi / P_REF, PcN),
+    ramp: cfg.startMode === 'burst' ? 0 : (cfg.rampMs * 1e-3) / tScale,
+    RcCells: contour.Rc / dx,
+    cfl: cfg.cfl || 0.6,
+    dtMax: 10.0,
+    wFloor: 2.0 * c0 + Math.abs(uinf),
+    vMax: 3.0 * (uLim + c0 + Math.abs(uinf) + ca),
+    hllBlend: cfg.hllBlend === undefined ? 1.0 : cfg.hllBlend,
+    order2: cfg.order2 === undefined ? true : cfg.order2,
+    ReN, RaN: 1.0, Ta: atm.T, pa: atm.p, uinf, uLimN: uLim,
+  };
+}
+
+// Convert a column read-back into exit-plane performance numbers (SI)
+function exitPerformance(setup, col) {
+  const { Nr, dx, P } = setup, g = P.gamma;
+  let F = 0, mdot = 0, Mw = 0, pw = 0, A = 0;
+  for (let j = 0; j < setup.jExit; j++) {
+    const k = j * 4;
+    const rho = Math.max(col.A[k], 1e-9), u = col.A[k + 1] / rho, v = col.A[k + 2] / rho;
+    const p = Math.max((g - 1) * (col.A[k + 3] - 0.5 * rho * (u * u + v * v)), 1e-9);
+    const dA = setup.geo ? 2 * Math.PI * Math.abs(setup.geo.Ax[j * setup.geo.W1 + setup.iExit + 1]) * dx * dx : 2 * Math.PI * (j + 0.5) * dx * dx;
+    const c = Math.sqrt(g * p / rho);
+    const m = rho * u * dA;
+    F += (rho * u * u + p - P.amb[3]) * dA;
+    mdot += m;
+    Mw += m * Math.sqrt(u * u + v * v) / c;
+    pw += p * dA; A += dA;
+  }
+  const Fsi = F * P_REF;                          // rho_hat*u_hat^2 has units of P_REF
+  const mdotSi = mdot * RHO_REF * U_REF;
+  return {
+    F: Fsi, mdot: mdotSi, Me: mdot > 1e-12 ? Mw / mdot : 0,
+    pe: (A > 0 ? pw / A : 0) * P_REF,
+    Isp: mdotSi > 1e-9 ? Fsi / (mdotSi * G0) : 0,
+  };
+}
+function cellPrimSI(setup, a, b) {
+  const g = setup.P.gamma;
+  const rho = Math.max(a[0], 1e-9), u = a[1] / rho, v = a[2] / rho;
+  const p = Math.max((g - 1) * (a[3] - 0.5 * rho * (u * u + v * v)), 1e-9);
+  const Y = Math.min(Math.max(b[0] / rho, 0), 1);
+  const Rmix = Y * setup.P.ReN + (1 - Y) * setup.P.RaN;
+  const T = p / (rho * Rmix) * T_REF;
+  const c = Math.sqrt(g * p / rho);
+  return { rho: rho * RHO_REF, u: u * U_REF, v: v * U_REF, p: p * P_REF, T, Y, M: Math.hypot(u, v) / c };
+}
+
+if (typeof module !== 'undefined') module.exports = { buildSimSetup, computeParams, exitPerformance, cellPrimSI };
+
+// ===== render.js =====
+// ============================================================================
+// render.js — turns the solver state into pictures: derived-field pass,
+// colour maps, mirrored display with zoom/pan, sonic line / Mach contours,
+// and GPU flow-tracer particles.
+// ============================================================================
+'use strict';
+
+const FIELDS = [
+  { id: 'temp',   label: 'Temperature',      unit: 'K' },
+  { id: 'mach',   label: 'Mach number',      unit: '' },
+  { id: 'schl',   label: 'Schlieren',        unit: '' },
+  { id: 'pres',   label: 'Pressure (log)',   unit: 'Pa' },
+  { id: 'dens',   label: 'Density (log)',    unit: 'kg/m³' },
+  { id: 'vel',    label: 'Velocity',         unit: 'm/s' },
+  { id: 'vort',   label: 'Vorticity',        unit: '1/s' },
+  { id: 'exh',    label: 'Exhaust fraction', unit: '' },
+  { id: 'flame',  label: 'Flame (visual)',   unit: '' },
+];
+
+const COLORMAPS = {
+  plasma:  { name: 'Workbench blue', stops: [[0, '#040820'], [0.16, '#081a5c'], [0.36, '#0b47b8'], [0.56, '#1690e6'], [0.74, '#26cfe6'], [0.88, '#56f0ae'], [1, '#d6ff6e']] },
+  turbo:   { name: 'Turbo', fn: t => [
+    0.13572138 + t * (4.61539260 + t * (-42.66032258 + t * (132.13108234 + t * (-152.94239396 + t * 59.28637943)))),
+    0.09140261 + t * (2.19418839 + t * (4.84296658 + t * (-14.18503333 + t * (4.27729857 + t * 2.82956604)))),
+    0.10667330 + t * (12.64194608 + t * (-60.58204836 + t * (110.36276771 + t * (-89.90310912 + t * 27.34824973))))] },
+  inferno: { name: 'Inferno', stops: [[0, '#000004'], [0.14, '#1f0c48'], [0.29, '#550f6d'], [0.43, '#88226a'], [0.57, '#ba3655'], [0.71, '#e35933'], [0.86, '#f98e09'], [1, '#fcffa4']] },
+  viridis: { name: 'Viridis', stops: [[0, '#440154'], [0.25, '#3b528b'], [0.5, '#21918c'], [0.75, '#5ec962'], [1, '#fde725']] },
+  ice:     { name: 'Ice', stops: [[0, '#02040a'], [0.3, '#10264a'], [0.6, '#3d7fb5'], [0.85, '#a9dcf2'], [1, '#ffffff']] },
+  flame:   { name: 'Flame', stops: [[0, '#000000'], [0.18, '#2a0700'], [0.42, '#9c2500'], [0.62, '#f06a00'], [0.82, '#ffc650'], [1, '#fffbea']] },
+  grey:    { name: 'Greyscale', stops: [[0, '#000000'], [1, '#ffffff']] },
+};
+
+function hexToRgb(h) { const n = parseInt(h.slice(1), 16); return [(n >> 16) / 255, ((n >> 8) & 255) / 255, (n & 255) / 255]; }
+function lutData(cm) {
+  const d = new Uint8Array(256 * 4);
+  for (let k = 0; k < 256; k++) {
+    const t = k / 255;
+    let c;
+    if (cm.fn) c = cm.fn(t);
+    else {
+      const s = cm.stops;
+      let a = 0; while (a < s.length - 2 && t > s[a + 1][0]) a++;
+      const u = Math.min(1, Math.max(0, (t - s[a][0]) / (s[a + 1][0] - s[a][0])));
+      const c0 = hexToRgb(s[a][1]), c1 = hexToRgb(s[a + 1][1]);
+      const sm = u * u * (3 - 2 * u) * 0.35 + u * 0.65;
+      c = c0.map((v, q) => v + (c1[q] - v) * sm);
+    }
+    for (let q = 0; q < 3; q++) d[k * 4 + q] = Math.round(255 * Math.min(1, Math.max(0, c[q])));
+    d[k * 4 + 3] = 255;
+  }
+  return d;
+}
+
+// ---------------------------------------------------------------------------
+const FS_DERIVED = GLSL_COMMON + `
+uniform sampler2D uA; uniform sampler2D uB;
+uniform int uField;
+uniform vec2 uRange;          // display range (after log, if any)
+uniform float uReN, uRaN;     // normalised gas constants
+uniform vec4 uTscale;         // (T_REF, Tc_K, Ta_K, unused)
+uniform float uSchlGain;
+uniform float uVelScale;      // U_REF
+uniform float uDx;            // cell size (m)
+out vec4 o;
+Prim P(ivec2 c) {
+  c = clamp(c, ivec2(0), uN - 1);
+  if (solidAt(c)) c = clamp(c, ivec2(0), uN - 1);
+  return toPrim(texelFetch(uA, c, 0), texelFetch(uB, c, 0).r);
+}
+float lrho(ivec2 c) {
+  ivec2 cc = clamp(c, ivec2(0), uN - 1);
+  if (c.y < 0) cc.y = -c.y - 1;
+  return log(max(texelFetch(uA, cc, 0).x, 1e-7));
+}
+void main() {
+  ivec2 ij = ivec2(gl_FragCoord.xy);
+  if (solidAt(ij)) { o = vec4(0.0, 0.0, 0.0, -1.0); return; }
+  Prim q = P(ij);
+  float rho = q.w.x, p = q.w.w;
+  float c = sqrt(uGamma * p / rho);
+  float spd = length(q.w.yz);
+  float M = spd / c;
+  float Rm = mix(uRaN, uReN, q.y);
+  float T = p / (rho * Rm) * uTscale.x;
+  float v = 0.0;
+  if (uField == 0) v = T;
+  else if (uField == 1) v = M;
+  else if (uField == 2) {
+    // numerical schlieren: |grad ln rho|, ignoring wall neighbours
+    float l0 = lrho(ij);
+    float le = solidAt(clamp(ij + ivec2(1,0), ivec2(0), uN-1)) ? l0 : lrho(ij + ivec2(1, 0));
+    float lw = solidAt(clamp(ij - ivec2(1,0), ivec2(0), uN-1)) ? l0 : lrho(ij - ivec2(1, 0));
+    float ln = solidAt(clamp(ij + ivec2(0,1), ivec2(0), uN-1)) ? l0 : lrho(ij + ivec2(0, 1));
+    float ls = (ij.y > 0 && solidAt(ij - ivec2(0,1))) ? l0 : lrho(ij - ivec2(0, 1));
+    float g = length(vec2(le - lw, ln - ls)) * 0.5;
+    v = 1.0 - exp(-uSchlGain * g);
+  }
+  else if (uField == 3) v = log(p * 101325.0) / log(10.0);
+  else if (uField == 4) v = log(rho * 1.225) / log(10.0);
+  else if (uField == 5) v = spd * uVelScale;
+  else if (uField == 6) {
+    Prim e = P(ij + ivec2(1, 0)), w = P(ij - ivec2(1, 0)), n = P(ij + ivec2(0, 1));
+    Prim s = Prim(vec4(q.w.x, q.w.y, -q.w.z, q.w.w), q.y);
+    if (ij.y > 0) s = P(ij - ivec2(0, 1));
+    float om = 0.5 * (e.w.z - w.w.z) - 0.5 * (n.w.y - s.w.y);
+    v = abs(om) * uVelScale / uDx;
+  }
+  else if (uField == 7) v = q.y;
+  else v = T;
+  float t = (v - uRange.x) / (uRange.y - uRange.x);
+  if (uField == 2) t = v;
+  if (uField == 6) t = log(1.0 + 20.0 * max(v, 0.0) / uRange.y) / log(21.0);
+  o = vec4(t, q.y, (T - uTscale.z) / max(uTscale.y - uTscale.z, 1.0), M);
+}
+`;
+
+const FS_DISPLAY = `#version 300 es
+precision highp float; precision highp int; precision highp sampler2D;
+in vec2 vUv;
+uniform sampler2D uD;        // derived field (t, Y, Tn, M), a = -1 in walls
+uniform sampler2D uD2;       // second field for split view (lower half)
+uniform int uSplit;
+uniform int uField2;
+uniform sampler2D uLUT;
+uniform sampler2D uLUT2;     // flame colormap
+uniform ivec2 uN;
+uniform vec4 uView;          // x0, y0, xw, yh (cells; y signed, r = |y|)
+uniform int uField;
+uniform int uMirror;
+uniform int uSonic;          // 0 none, 1 sonic line, 2 Mach contours
+uniform vec3 uBg;
+uniform float uFlameGain;
+out vec4 o;
+bool lowerHalf = false;
+vec4 fetchD(ivec2 c) {
+  c.x = clamp(c.x, 0, uN.x - 1);
+  if (c.y < 0) c.y = -c.y - 1;
+  c.y = min(c.y, uN.y - 1);
+  return lowerHalf ? texelFetch(uD2, c, 0) : texelFetch(uD, c, 0);
+}
+void main() {
+  float x = uView.x + vUv.x * uView.z;
+  float y = uView.y + vUv.y * uView.w;
+  float r = abs(y);
+  if (x < 0.0 || x > float(uN.x) || r > float(uN.y) || (uMirror == 0 && y < 0.0)) { o = vec4(uBg * 0.6, 1.0); return; }
+  lowerHalf = uSplit == 1 && y < 0.0;
+  int field = lowerHalf ? uField2 : uField;
+  vec2 g = vec2(x, r) - 0.5;
+  ivec2 c0 = ivec2(floor(g));
+  vec2 f = g - vec2(c0);
+  vec4 d00 = fetchD(c0), d10 = fetchD(c0 + ivec2(1, 0)), d01 = fetchD(c0 + ivec2(0, 1)), d11 = fetchD(c0 + ivec2(1, 1));
+  float w00 = (1.0 - f.x) * (1.0 - f.y) * step(-0.5, d00.w);
+  float w10 = f.x * (1.0 - f.y) * step(-0.5, d10.w);
+  float w01 = (1.0 - f.x) * f.y * step(-0.5, d01.w);
+  float w11 = f.x * f.y * step(-0.5, d11.w);
+  float ws = w00 + w10 + w01 + w11;
+  if (ws < 1e-6) { o = vec4(0.10, 0.11, 0.14, 1.0); return; }
+  vec4 d = (d00 * w00 + d10 * w10 + d01 * w01 + d11 * w11) / ws;
+  vec3 col;
+  if (field == 8) {
+    float Tn = clamp(d.z, 0.0, 1.2);
+    float Y = clamp(d.y, 0.0, 1.0);
+    float tn = clamp(Tn, 0.0, 1.0);
+    float em = pow(Y, 0.6) * (0.07 + 1.15 * pow(tn, 1.35)) * uFlameGain;
+    vec3 fc = texture(uLUT2, vec2(clamp(0.22 + 0.78 * sqrt(tn), 0.0, 1.0), 0.5)).rgb;
+    col = uBg + fc * em;
+    col = col / (1.0 + 0.35 * col);
+  } else {
+    col = texture(uLUT, vec2(clamp(d.x, 0.002, 0.998), 0.5)).rgb;
+  }
+  if (uSonic > 0) {
+    float M = d.w;
+    float fw = max(fwidth(M), 1e-4);
+    float line;
+    if (uSonic == 1) line = (1.0 - smoothstep(0.6, 1.6, abs(M - 1.0) / fw)) * step(0.02, fw);
+    else {
+      float m2 = M * 2.0;
+      float fr = abs(fract(m2 + 0.5) - 0.5) / max(fwidth(m2), 1e-3);
+      line = (1.0 - smoothstep(0.5, 1.4, fr)) * 0.5 * smoothstep(0.3, 0.45, M);
+      line = max(line, 1.0 - smoothstep(0.6, 1.6, abs(M - 1.0) / fw));
+    }
+    col = mix(col, vec3(1.0, 1.0, 1.0), line * 0.85);
+  }
+  if (uSplit == 1) { float fy = fwidth(y); col = mix(col, vec3(0.75, 0.8, 0.9), (1.0 - smoothstep(0.0, 1.5 * fy, abs(y))) * 0.35); }
+  o = vec4(col, 1.0);
+}
+`;
+
+// ---------------------------------------------------------------------------
+// Particles: state texture (x, r, age, seed); advected with the local velocity
+// ---------------------------------------------------------------------------
+const FS_PART_ADVECT = GLSL_COMMON + `
+uniform sampler2D uP;         // particle state
+uniform sampler2D uA;
+uniform float uDt;            // grid-time advanced since last frame
+uniform float uFrame;
+uniform vec4 uSpawn;          // chamber length (cells), Rc (cells), exhaust spawn share, maxAge
+out vec4 o;
+float hash(vec2 p) { p = fract(p * vec2(123.34, 456.21)); p += dot(p, p + 45.32); return fract(p.x * p.y); }
+vec2 vel(vec2 pos) {
+  ivec2 c = ivec2(clamp(pos, vec2(0.0), vec2(uN) - 1.0));
+  if (solidAt(c)) return vec2(0.0);
+  vec4 a = texelFetch(uA, c, 0);
+  return a.yz / max(a.x, 1e-7);
+}
+void main() {
+  ivec2 ij = ivec2(gl_FragCoord.xy);
+  vec4 s = texelFetch(uP, ij, 0);
+  vec2 pos = s.xy;
+  float age = s.z + 1.0;
+  // RK2 advection in grid units
+  vec2 v1 = vel(pos);
+  vec2 mid = pos + 0.5 * uDt * v1;
+  mid.y = abs(mid.y);
+  vec2 v2 = vel(mid);
+  pos += uDt * v2;
+  pos.y = abs(pos.y);
+  bool dead = age > uSpawn.w || pos.x < 0.0 || pos.x >= float(uN.x) || pos.y >= float(uN.y)
+           || solidAt(ivec2(clamp(pos, vec2(0.0), vec2(uN) - 1.0)));
+  if (dead || s.w == 0.0) {
+    float h1 = hash(vec2(ij) + uFrame * 0.731), h2 = hash(vec2(ij).yx * 1.37 + uFrame * 0.129);
+    float h3 = hash(vec2(ij) * 0.77 + uFrame * 1.913);
+    if (h3 < uSpawn.z) pos = vec2(h1 * uSpawn.x, sqrt(h2) * uSpawn.y * 0.95);
+    else pos = vec2(h1 * float(uN.x), sqrt(h2) * float(uN.y));
+    age = floor(hash(vec2(ij) * 3.1 + uFrame) * uSpawn.w * 0.5);
+  }
+  float sgn = s.w == 0.0 ? (hash(vec2(ij) * 9.1) < 0.5 ? -1.0 : 1.0) : sign(s.w);
+  o = vec4(pos, age, sgn * (1.0 + min(length(v2), 1e4)));
+}
+`;
+const VS_PART = `#version 300 es
+precision highp float; precision highp sampler2D;
+uniform sampler2D uP;
+uniform ivec2 uPN;
+uniform vec4 uView;
+uniform int uMirror;
+uniform float uSize;
+uniform float uMaxAge;
+uniform vec2 uSpd;
+out float vA;
+void main() {
+  ivec2 c = ivec2(gl_VertexID % uPN.x, gl_VertexID / uPN.x);
+  vec4 s = texelFetch(uP, c, 0);
+  float y = s.y * (uMirror == 1 ? sign(s.w) : 1.0);
+  float spd = abs(s.w) - 1.0;
+  vec2 uv = vec2((s.x - uView.x) / uView.z, (y - uView.y) / uView.w);
+  gl_Position = vec4(uv * 2.0 - 1.0, 0.0, 1.0);
+  gl_PointSize = uSize;
+  float a = s.z / uMaxAge;
+  vA = smoothstep(0.0, 0.08, a) * (1.0 - smoothstep(0.75, 1.0, a)) * (0.08 + 0.92 * smoothstep(uSpd.x, uSpd.y, spd));
+  if (s.w == 0.0) vA = 0.0;
+}
+`;
+const FS_PART = `#version 300 es
+precision highp float;
+in float vA;
+uniform vec3 uColor;
+out vec4 o;
+void main() {
+  vec2 d = gl_PointCoord - 0.5;
+  float m = 1.0 - smoothstep(0.2, 0.5, length(d));
+  o = vec4(uColor * m * vA, 1.0);
+}
+`;
+
+
+// ---------------------------------------------------------------------------
+// Glow (bloom) post-process
+// ---------------------------------------------------------------------------
+const FS_BRIGHT = `#version 300 es
+precision highp float;
+in vec2 vUv;
+uniform sampler2D uS; uniform vec2 uTexel; uniform float uThr;
+out vec4 o;
+void main() {
+  vec3 c = vec3(0.0);
+  c += texture(uS, vUv + uTexel * vec2(-1.0, -1.0)).rgb;
+  c += texture(uS, vUv + uTexel * vec2( 1.0, -1.0)).rgb;
+  c += texture(uS, vUv + uTexel * vec2(-1.0,  1.0)).rgb;
+  c += texture(uS, vUv + uTexel * vec2( 1.0,  1.0)).rgb;
+  c *= 0.25;
+  float l = max(c.r, max(c.g, c.b));
+  o = vec4(c * smoothstep(uThr, uThr + 0.35, l), 1.0);
+}
+`;
+const FS_BLUR = `#version 300 es
+precision highp float;
+in vec2 vUv;
+uniform sampler2D uS; uniform vec2 uDir;
+out vec4 o;
+void main() {
+  vec3 c = texture(uS, vUv).rgb * 0.2270270;
+  c += texture(uS, vUv + uDir * 1.3846154).rgb * 0.3162162;
+  c += texture(uS, vUv - uDir * 1.3846154).rgb * 0.3162162;
+  c += texture(uS, vUv + uDir * 3.2307692).rgb * 0.0702703;
+  c += texture(uS, vUv - uDir * 3.2307692).rgb * 0.0702703;
+  o = vec4(c, 1.0);
+}
+`;
+const FS_COMBINE = `#version 300 es
+precision highp float;
+in vec2 vUv;
+uniform sampler2D uS; uniform sampler2D uB1; uniform sampler2D uB2; uniform float uK;
+out vec4 o;
+void main() {
+  vec3 c = texture(uS, vUv).rgb + uK * (0.6 * texture(uB1, vUv).rgb + 0.9 * texture(uB2, vUv).rgb);
+  // soft shoulder above 0.8 only, so unbloomed colours are untouched
+  vec3 hi = 0.8 + 0.2 * (1.0 - exp(-(c - 0.8) / 0.2));
+  c = mix(c, hi, step(0.8, c));
+  o = vec4(c, 1.0);
+}
+`;
+
+class Renderer {
+  constructor(gl, solver) {
+    this.gl = gl; this.solver = solver;
+    this.progDerived = solver._program(VS_QUAD, FS_DERIVED);
+    this.progDisplay = solver._program(VS_QUAD, FS_DISPLAY);
+    this.progAdvect = solver._program(VS_QUAD, FS_PART_ADVECT);
+    this.progPart = solver._program(VS_PART, FS_PART);
+    this.lut = this._lutTex(); this.lut2 = this._lutTex();
+    this.setColormap('plasma');
+    this._setLut(this.lut2, COLORMAPS.flame);
+    this.PN = [128, 64];
+    this.frame = 0;
+    this.progBright = solver._program(VS_QUAD, FS_BRIGHT);
+    this.progBlur = solver._program(VS_QUAD, FS_BLUR);
+    this.progCombine = solver._program(VS_QUAD, FS_COMBINE);
+    this.post = null;
+  }
+  _rt(w, h) {
+    const gl = this.gl, t = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, t);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, w, h, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    const f = gl.createFramebuffer();
+    gl.bindFramebuffer(gl.FRAMEBUFFER, f);
+    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, t, 0);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    return { t, f, w, h };
+  }
+  _ensurePost(W, H) {
+    const gl = this.gl;
+    if (this.post && this.post.W === W && this.post.H === H) return;
+    if (this.post) for (const r of this.post.all) { gl.deleteTexture(r.t); gl.deleteFramebuffer(r.f); }
+    const w2 = Math.max(1, W >> 2), h2 = Math.max(1, H >> 2), w3 = Math.max(1, W >> 3), h3 = Math.max(1, H >> 3);
+    const scene = this._rt(W, H), a = this._rt(w2, h2), b = this._rt(w2, h2), c = this._rt(w3, h3), d = this._rt(w3, h3);
+    this.post = { W, H, scene, a, b, c, d, all: [scene, a, b, c, d] };
+  }
+  _pass(prog, target, binds, uni) {
+    const gl = this.gl, s = this.solver;
+    gl.useProgram(prog.p);
+    let unit = 0;
+    for (const [name, tex] of binds) s._bindTex(prog, name, tex, unit++);
+    uni && uni(prog);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, target ? target.f : null);
+    gl.viewport(0, 0, target ? target.w : this.post.W, target ? target.h : this.post.H);
+    gl.drawArrays(gl.TRIANGLES, 0, 3);
+  }
+  _lutTex() {
+    const gl = this.gl, t = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, t);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, 256, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    return t;
+  }
+  _setLut(tex, cm) {
+    const gl = this.gl;
+    gl.bindTexture(gl.TEXTURE_2D, tex);
+    gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, 256, 1, gl.RGBA, gl.UNSIGNED_BYTE, lutData(cm));
+  }
+  setColormap(id) { this._setLut(this.lut, COLORMAPS[id] || COLORMAPS.plasma); this.cmap = id; }
+
+  resize(Nx, Nr) {
+    const gl = this.gl, s = this.solver;
+    if (this.derived) { gl.deleteTexture(this.derived); gl.deleteFramebuffer(this.derivedFbo); }
+    if (this.derived2) { gl.deleteTexture(this.derived2); gl.deleteFramebuffer(this.derivedFbo2); }
+    this.derived = s._tex(Nx, Nr, gl.RGBA32F, gl.RGBA, gl.FLOAT);
+    this.derivedFbo = s._fbo([this.derived]);
+    this.derived2 = s._tex(Nx, Nr, gl.RGBA32F, gl.RGBA, gl.FLOAT);
+    this.derivedFbo2 = s._fbo([this.derived2]);
+    if (!this.pTex) {
+      this.pTex = [0, 1].map(() => s._tex(this.PN[0], this.PN[1], gl.RGBA32F, gl.RGBA, gl.FLOAT));
+      this.pFbo = this.pTex.map(t => s._fbo([t]));
+      this.pIdx = 0;
+    }
+    this.resetParticles();
+  }
+  resetParticles() {
+    const gl = this.gl, z = new Float32Array(this.PN[0] * this.PN[1] * 4);
+    for (const t of this.pTex) { gl.bindTexture(gl.TEXTURE_2D, t); gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, this.PN[0], this.PN[1], gl.RGBA, gl.FLOAT, z); }
+  }
+
+  // V: view/display parameters from the app
+  derive(V, second = false) {
+    const gl = this.gl, s = this.solver, pr = this.progDerived;
+    if (second) V = Object.assign({}, V, { fieldIndex: V.fieldIndex2, range: V.range2 });
+    gl.bindVertexArray(s.vao);
+    gl.useProgram(pr.p);
+    gl.uniform2i(pr.u.uN, s.Nx, s.Nr);
+    gl.uniform1f(pr.u.uGamma, V.gamma);
+    s._bindTex(pr, 'uA', s.state.A, 0); s._bindTex(pr, 'uB', s.state.B, 1); s._bindTex(pr, 'uMask', s.mask, 2);
+    gl.uniform1i(pr.u.uField, V.fieldIndex === 8 ? 0 : V.fieldIndex);
+    gl.uniform2f(pr.u.uRange, V.range[0], V.range[1]);
+    gl.uniform1f(pr.u.uReN, V.ReN); gl.uniform1f(pr.u.uRaN, V.RaN);
+    gl.uniform4f(pr.u.uTscale, T_REF, V.Tc, V.Ta, 0);
+    gl.uniform1f(pr.u.uSchlGain, V.schlGain);
+    gl.uniform1f(pr.u.uVelScale, U_REF);
+    gl.uniform1f(pr.u.uDx, V.dx);
+    s._draw(second ? this.derivedFbo2 : this.derivedFbo, s.Nx, s.Nr);
+  }
+
+  advectParticles(dtGrid, spawn) {
+    const gl = this.gl, s = this.solver, pr = this.progAdvect;
+    gl.bindVertexArray(s.vao);
+    gl.useProgram(pr.p);
+    gl.uniform2i(pr.u.uN, s.Nx, s.Nr);
+    s._bindTex(pr, 'uP', this.pTex[this.pIdx], 0); s._bindTex(pr, 'uA', s.state.A, 1); s._bindTex(pr, 'uMask', s.mask, 2);
+    gl.uniform1f(pr.u.uDt, dtGrid);
+    gl.uniform1f(pr.u.uFrame, (this.frame++ % 997) + 1);
+    gl.uniform4fv(pr.u.uSpawn, spawn);
+    this.pIdx = 1 - this.pIdx;
+    s._draw(this.pFbo[this.pIdx], this.PN[0], this.PN[1]);
+  }
+
+  display(V, width, height) {
+    const gl = this.gl, s = this.solver, pr = this.progDisplay;
+    gl.bindVertexArray(s.vao);
+    if (V.glow) { this._ensurePost(width, height); gl.bindFramebuffer(gl.FRAMEBUFFER, this.post.scene.f); }
+    else gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    gl.viewport(0, 0, width, height);
+    gl.disable(gl.BLEND);
+    gl.useProgram(pr.p);
+    s._bindTex(pr, 'uD', this.derived, 0); s._bindTex(pr, 'uLUT', this.lut, 1); s._bindTex(pr, 'uLUT2', this.lut2, 2);
+    s._bindTex(pr, 'uD2', V.split ? this.derived2 : this.derived, 3);
+    gl.uniform1i(pr.u.uSplit, V.split ? 1 : 0);
+    gl.uniform1i(pr.u.uField2, V.fieldIndex2);
+    gl.uniform2i(pr.u.uN, s.Nx, s.Nr);
+    gl.uniform4fv(pr.u.uView, V.view);
+    gl.uniform1i(pr.u.uField, V.fieldIndex);
+    gl.uniform1i(pr.u.uMirror, V.mirror ? 1 : 0);
+    gl.uniform1i(pr.u.uSonic, V.sonic);
+    gl.uniform3fv(pr.u.uBg, V.bg);
+    gl.uniform1f(pr.u.uFlameGain, V.flameGain);
+    gl.drawArrays(gl.TRIANGLES, 0, 3);
+    if (V.particles) {
+      const pp = this.progPart;
+      if (!this.emptyVao) this.emptyVao = gl.createVertexArray();
+      gl.bindVertexArray(this.emptyVao);
+      gl.useProgram(pp.p);
+      gl.enable(gl.BLEND); gl.blendFunc(gl.ONE, gl.ONE);
+      s._bindTex(pp, 'uP', this.pTex[this.pIdx], 0);
+      gl.uniform2i(pp.u.uPN, this.PN[0], this.PN[1]);
+      gl.uniform4fv(pp.u.uView, V.view);
+      gl.uniform1i(pp.u.uMirror, V.mirror ? 1 : 0);
+      gl.uniform1f(pp.u.uSize, V.particleSize);
+      gl.uniform1f(pp.u.uMaxAge, V.particleAge);
+      gl.uniform2f(pp.u.uSpd, V.spdRef * 0.04, V.spdRef * 0.4);
+      gl.uniform3f(pp.u.uColor, 0.6, 0.66, 0.72);
+      gl.drawArrays(gl.POINTS, 0, this.PN[0] * this.PN[1]);
+      gl.disable(gl.BLEND);
+    }
+    if (V.glow) {
+      const P = this.post;
+      gl.bindVertexArray(s.vao);
+      this._pass(this.progBright, P.a, [['uS', P.scene.t]], pr => { gl.uniform2f(pr.u.uTexel, 1 / P.W, 1 / P.H); gl.uniform1f(pr.u.uThr, V.glowThr); });
+      this._pass(this.progBlur, P.b, [['uS', P.a.t]], pr => gl.uniform2f(pr.u.uDir, 1 / P.a.w, 0));
+      this._pass(this.progBlur, P.a, [['uS', P.b.t]], pr => gl.uniform2f(pr.u.uDir, 0, 1 / P.a.h));
+      this._pass(this.progBlur, P.c, [['uS', P.a.t]], pr => gl.uniform2f(pr.u.uDir, 1.5 / P.a.w, 0));
+      this._pass(this.progBlur, P.d, [['uS', P.c.t]], pr => gl.uniform2f(pr.u.uDir, 2 / P.c.w, 0));
+      this._pass(this.progBlur, P.c, [['uS', P.d.t]], pr => gl.uniform2f(pr.u.uDir, 0, 2 / P.c.h));
+      this._pass(this.progCombine, null, [['uS', P.scene.t], ['uB1', P.a.t], ['uB2', P.c.t]], pr => gl.uniform1f(pr.u.uK, V.glowK));
+    }
+  }
+}
+
+if (typeof module !== 'undefined') module.exports = { Renderer, FIELDS, COLORMAPS };
+
+// ===== app.js =====
+// ============================================================================
+// app.js — UI, presets, main loop, HUD, probe, recording, ascent mode.
+// ============================================================================
+'use strict';
+(function () {
+const $ = id => document.getElementById(id);
+const fmt = (v, d = 0) => (isFinite(v) ? v : 0).toLocaleString('en-GB', { minimumFractionDigits: d, maximumFractionDigits: d });
+
+// ---------------------------------------------------------------------------
+// Settings
+// ---------------------------------------------------------------------------
+const S = {
+  preset: 'demo', prop: 'kerolox',
+  Dt: 23, De: 119, type: 'bell', bellPct: 80, coneAngle: 15, CR: 6, chamberLen: 1.6,
+  base: false, bodyRatio: 1.5,
+  Pc: 196, throttle: 100, Tc: 3670, Mw: 22, gamma: 1.22,
+  alt: 0, mach: 0,
+  ascent: false, ascentTop: 35, ascentDur: 40, ascentMachTop: 3.0, ascentMach: true, throttleSweep: false,
+  res: 1024, domainL: 1.2, aspect: 0.28, startMode: 'ramp', rampMs: 0.12, cfl: 0.6, order2: true, wallModel: 'cut',
+  speed: 20,
+  field: 'temp', field2: 'schl', split: false, centerPlot: false, glow: true, glowK: 0.8, cmap: 'plasma', mirror: true, sonic: 0, particles: false, schlGain: 10, flameGain: 1.0,
+  recSize: 'window',
+};
+
+const RES_OPTIONS = [[384, 'Draft — 384 × 108'], [640, 'Low — 640 × 179'], [1024, 'Medium — 1024 × 287'], [1536, 'High — 1536 × 430'], [2048, 'Ultra — 2048 × 573']];
+
+// kind: live (applied smoothly while running), geo (re-mesh walls, flow continues),
+//       reset (restart sim), next (applies on next restart), view (display only)
+const CONTROLS = [
+  { section: 'Engine geometry', open: true, items: [
+    { key: 'Dt', label: 'Throat diameter', min: 4, max: 150, step: 0.5, unit: 'mm', kind: 'geo', d: 1 },
+    { key: 'De', label: 'Exit diameter', min: 6, max: 500, step: 1, unit: 'mm', kind: 'geo', d: 0, hint: () => {
+      const t = theoryNow(); if (!t) return '';
+      const opt = isFinite(t.epsOpt) ? `ideal for this altitude ≈ ${fmt(t.epsOpt, 1)}` : 'vacuum: bigger is always better';
+      return `Expansion ratio ε = ${fmt(t.eps, 1)} · ${opt}`; } },
+    { key: 'type', label: 'Nozzle shape', type: 'seg', options: [['bell', 'Bell (Rao)'], ['cone', 'Conical']], kind: 'geo' },
+    { key: 'bellPct', label: 'Bell length', min: 60, max: 100, step: 1, unit: '% of 15° cone', kind: 'geo', d: 0, show: () => S.type === 'bell' },
+    { key: 'coneAngle', label: 'Cone half-angle', min: 6, max: 35, step: 0.5, unit: '°', kind: 'geo', d: 1, show: () => S.type === 'cone' },
+    { key: 'CR', label: 'Contraction ratio', min: 1.8, max: 12, step: 0.1, unit: 'Ac/At', kind: 'geo', d: 1 },
+    { key: 'chamberLen', label: 'Chamber length', min: 0.6, max: 4, step: 0.1, unit: '× Rc', kind: 'geo', d: 1 },
+    { key: 'base', label: 'Rocket body around engine', type: 'toggle', kind: 'geo' },
+    { key: 'bodyRatio', label: 'Body diameter', min: 1.05, max: 3, step: 0.05, unit: '× nozzle', kind: 'geo', d: 2, show: () => S.base },
+  ] },
+  { section: 'Combustion', open: true, items: [
+    { key: 'prop', label: 'Propellant', type: 'select', options: Object.entries(PROPELLANTS).map(([k, v]) => [k, v.name]), kind: 'prop' },
+    { key: 'Pc', label: 'Chamber pressure', min: 2, max: 350, step: 1, unit: 'bar', kind: 'live', d: 0 },
+    { key: 'throttle', label: 'Throttle', min: 10, max: 120, step: 1, unit: '%', kind: 'live', d: 0 },
+    { key: 'Tc', label: 'Chamber temperature', min: 200, max: 4200, step: 10, unit: 'K', kind: 'live', d: 0 },
+    { key: 'Mw', label: 'Exhaust molar mass', min: 2, max: 44, step: 0.5, unit: 'kg/kmol', kind: 'live', d: 1 },
+    { key: 'gamma', label: 'Ratio of specific heats γ', min: 1.1, max: 1.67, step: 0.01, unit: '', kind: 'reset', d: 2, hint: () => 'Changing γ restarts the run' },
+  ] },
+  { section: 'Flight & environment', open: true, items: [
+    { key: 'alt', label: 'Altitude', min: 0, max: 45, step: 0.1, unit: 'km', kind: 'live', d: 1, hint: () => { const a = atmosphere(S.alt * 1000); return `Ambient ${fmt(a.p / 1000, a.p < 1000 ? 3 : 1)} kPa · ${fmt(a.T, 0)} K`; } },
+    { key: 'mach', label: 'Flight Mach number', min: 0, max: 5, step: 0.05, unit: '', kind: 'live', d: 2 },
+    { key: 'ascent', label: 'Ascent mode (sweep altitude)', type: 'toggle', kind: 'mode' },
+    { key: 'ascentTop', label: 'Ascent to', min: 5, max: 45, step: 1, unit: 'km', kind: 'view', d: 0, show: () => S.ascent },
+    { key: 'ascentDur', label: 'Ascent duration', min: 5, max: 180, step: 1, unit: 's (real time)', kind: 'view', d: 0, show: () => S.ascent },
+    { key: 'ascentMach', label: 'Speed up during ascent', type: 'toggle', kind: 'view', show: () => S.ascent },
+    { key: 'ascentMachTop', label: 'Final flight Mach', min: 0, max: 5, step: 0.1, unit: '', kind: 'view', d: 1, show: () => S.ascent && S.ascentMach },
+    { key: 'throttleSweep', label: 'Throttle sweep (40–100 %)', type: 'toggle', kind: 'mode' },
+  ] },
+  { section: 'View', open: true, items: [
+    { key: 'cmap', label: 'Colour map', type: 'select', options: Object.entries(COLORMAPS).filter(([k]) => k !== 'flame').map(([k, v]) => [k, v.name]), kind: 'view' },
+    { key: 'mirror', label: 'Mirror about axis (full plume)', type: 'toggle', kind: 'view' },
+    { key: 'split', label: 'Split view (second field below axis)', type: 'toggle', kind: 'view' },
+    { key: 'field2', label: 'Lower-half field', type: 'select', options: FIELDS.map(f => [f.id, f.label]), kind: 'view', show: () => S.split },
+    { key: 'sonic', label: 'Overlay', type: 'seg', options: [[0, 'None'], [1, 'Sonic line'], [2, 'Mach contours']], kind: 'view' },
+    { key: 'particles', label: 'Flow tracer particles', type: 'toggle', kind: 'view' },
+    { key: 'centerPlot', label: 'Centreline plot (Mach & pressure on axis)', type: 'toggle', kind: 'view' },
+    { key: 'glow', label: 'Glow (bloom)', type: 'toggle', kind: 'view' },
+    { key: 'glowK', label: 'Glow strength', min: 0, max: 2.5, step: 0.05, unit: '', kind: 'view', d: 2, show: () => S.glow },
+    { key: 'schlGain', label: 'Schlieren sensitivity', min: 1, max: 40, step: 0.5, unit: '', kind: 'view', d: 1, show: () => S.field === 'schl' },
+    { key: 'flameGain', label: 'Flame brightness', min: 0.2, max: 3, step: 0.05, unit: '', kind: 'view', d: 2, show: () => S.field === 'flame' },
+  ] },
+  { section: 'Simulation', open: false, items: [
+    { key: 'res', label: 'Grid resolution', type: 'select', options: RES_OPTIONS, kind: 'reset', hint: () => setup ? `Δx = ${fmt(setup.dx * 1000, 2)} mm · throat radius = ${fmt(setup.resolution.throatCells, 1)} cells` + (setup.resolution.throatCells < 7 ? '  ⚠ throat under-resolved' : '') : '' },
+    { key: 'domainL', label: 'Domain length', min: 0.1, max: 8, step: 0.05, unit: 'm', kind: 'reset', d: 2, hint: () => {
+      if (!setup) return '';
+      const L = setup.Nx * setup.dx, f = setup.contour.xe / L, rf = setup.contour.Re / (setup.Nr * setup.dx);
+      let h = `Actual ${fmt(L, 2)} m × ${fmt(setup.Nr * setup.dx, 2)} m (snapped to the throat)`;
+      if (f > 0.6) h += '  ⚠ engine fills most of the domain: increase length or use Fit';
+      else if (rf > 0.45) h += '  ⚠ nozzle exit is close to the top boundary: increase length';
+      return h; } },
+    { key: '_fit', label: 'Fit domain to engine', type: 'button', action: () => fitDomain() },
+    { key: 'wallModel', label: 'Wall model', type: 'seg', options: [['cut', 'Cut-cell (smooth)'], ['stair', 'Stepped']], kind: 'reset', hint: () => 'Cut-cell walls follow the true nozzle contour' },
+    { key: 'startMode', label: 'Start-up', type: 'seg', options: [['ramp', 'Ignition ramp'], ['burst', 'Diaphragm burst']], kind: 'next' },
+    { key: 'rampMs', label: 'Ignition ramp time', min: 0.01, max: 3, step: 0.01, unit: 'ms', kind: 'next', d: 2, show: () => S.startMode === 'ramp' },
+    { key: 'cfl', label: 'CFL number', min: 0.2, max: 0.9, step: 0.05, unit: '', kind: 'live2', d: 2 },
+    { key: 'order2', label: 'Second-order reconstruction', type: 'toggle', kind: 'live2' },
+    { key: '_reset', label: 'Reset all settings to defaults', type: 'button', action: () => { try { localStorage.removeItem(STORE_KEY); } catch (e) {} applyPreset('demo'); } },
+  ] },
+  { section: 'Theory vs simulation', open: false, custom: 'theory' },
+  { section: 'Recording', open: false, items: [
+    { key: 'recSize', label: 'Video / screenshot frame', type: 'select', options: [['window', 'Same as window'], ['1080p', '1920 × 1080 landscape'], ['4k', '3840 × 2160 landscape'], ['portrait', '1080 × 1920 portrait (phone)'], ['square', '1080 × 1080 square']], kind: 'view' },
+  ], customAfter: 'recnote' },
+  { section: 'Help', open: false, custom: 'help' },
+];
+
+// ---------------------------------------------------------------------------
+// GL setup
+// ---------------------------------------------------------------------------
+const glCanvas = $('gl'), ovCanvas = $('overlay');
+const ov = ovCanvas.getContext('2d');
+let gl, solver, renderer, setup = null;
+let running = true, stepsTotal = 0, simTime = 0, lastDt = 0.03;
+let pStartSi = 101325;
+let live = null;               // smoothed live values actually applied
+let P = null;                  // current solver params
+let perf = null, chamber = null;
+let frameNo = 0, lastFrameT = performance.now();
+let stepsWindow = 0, stepsPerSec = 0, fps = 0, fpsWindow = 0, statT = performance.now();
+let budget = 3;                // adaptive steps/frame cap (starts small, grows while frames stay fast)
+let slowFrames = 0, minFrameDt = 0.05;   // learnt display frame interval (s)
+const view = { cx: 0, cy: 0, zoom: 1, fitted: false };
+const mouse = { x: 0, y: 0, inside: false, down: false, lastX: 0, lastY: 0, moved: false };
+
+function showMsg(html) { const m = $('msg'); m.innerHTML = html; m.style.display = html ? 'block' : 'none'; }
+
+function initGL() {
+  gl = glCanvas.getContext('webgl2', { antialias: false, alpha: false, depth: false, stencil: false, preserveDrawingBuffer: false, powerPreference: 'high-performance' });
+  if (!gl) { showMsg('<b>WebGL 2 is not available.</b><br>Open this file in an up-to-date Chrome or Edge with hardware acceleration enabled (Settings → System → "Use graphics acceleration when available").'); return false; }
+  try {
+    solver = new GPUSolver(gl);
+    renderer = new Renderer(gl, solver);
+  } catch (e) {
+    console.error(e);
+    showMsg('<b>Could not start the GPU solver.</b><br>' + e.message + '<br><br>Try Chrome/Edge with graphics acceleration on.');
+    return false;
+  }
+  glCanvas.addEventListener('webglcontextlost', ev => {
+    ev.preventDefault();            // lets the browser hand the context back
+    contextLost = true; lossCount++; frameFences = [];
+    showMsg('<b>GPU reset</b> — the graphics driver restarted. Recovering…');
+    clearTimeout(restoreTimer);
+    restoreTimer = setTimeout(() => { if (contextLost) showMsg('<b>The GPU has not come back.</b><br>The browser may have blocked WebGL after repeated resets. Close <i>every</i> browser window, reopen this file, and pick a lower grid resolution.<br><br>' + gpuAdvice()); }, 8000);
+  });
+  glCanvas.addEventListener('webglcontextrestored', () => {
+    try {
+      solver = new GPUSolver(gl); renderer = new Renderer(gl, solver); renderer.setColormap(S.cmap);
+    } catch (e) { showMsg('<b>Could not restart the GPU solver.</b><br>' + e.message); return; }
+    contextLost = false; clearTimeout(restoreTimer); frameFences = [];
+    // come back gently: one resolution step down and a small step budget
+    const idx = RES_OPTIONS.findIndex(o => o[0] === S.res);
+    let note = '';
+    if (idx > 0) { S.res = RES_OPTIONS[idx - 1][0]; syncControl('res'); note = ` Grid dropped to ${RES_OPTIONS[idx - 1][1].split(' —')[0]} to be safe.`; }
+    budget = 2; setup = null; perf = null;
+    restart(); saveSettings();
+    showMsg('<b>Recovered from a GPU reset.</b>' + note + '<br>' + gpuAdvice());
+    setTimeout(() => showMsg(''), 7000);
+  });
+  const dbg = gl.getExtension('WEBGL_debug_renderer_info');
+  window.__gpu = dbg ? gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL) : gl.getParameter(gl.RENDERER);
+  gpuName = shortGpu(window.__gpu);
+  return true;
+}
+let contextLost = false, lossCount = 0, restoreTimer = null, gpuName = '';
+function shortGpu(r) {
+  r = (r || '').replace(/\(R\)|\(TM\)/g, '');
+  const m = /ANGLE \(([^,]*),\s*([^(]+?)(?:\s+Direct3D|\s+\(|,|\))/.exec(r || '');
+  let n = m ? m[2] : (r || 'unknown GPU');
+  return n.replace(/\(R\)|\(TM\)/g, '').replace(/\s+/g, ' ').trim().slice(0, 48);
+}
+function isIntegrated() { return /intel|uhd|iris|microsoft basic|swiftshader|llvmpipe/i.test(window.__gpu || ''); }
+function gpuAdvice() {
+  return isIntegrated()
+    ? `Running on <b>${gpuName}</b> (integrated graphics). For much better speed and stability, make the browser use the NVIDIA GPU: Windows Settings → System → Display → Graphics → your browser → <b>High performance</b>, then restart the browser.`
+    : `Running on <b>${gpuName}</b>.`;
+}
+
+// ---------------------------------------------------------------------------
+// Configuration -> setup
+// ---------------------------------------------------------------------------
+function cfgFromS() {
+  return {
+    Dt: S.Dt / 1000, De: Math.max(S.De, S.Dt * 1.02) / 1000, type: S.type, bellPct: S.bellPct, coneAngle: S.coneAngle,
+    CR: S.CR, chamberLen: S.chamberLen, Pc: S.Pc * 1e5 * S.throttle / 100, Tc: S.Tc, gamma: S.gamma, Mw: S.Mw,
+    alt: S.alt * 1000, mach: S.mach, base: S.base, bodyRatio: S.bodyRatio, domainL: S.domainL, Nx: S.res,
+    aspect: S.aspect, startMode: S.startMode, rampMs: S.rampMs, cfl: S.cfl, order2: S.order2, wallModel: S.wallModel,
+  };
+}
+function liveTargets() {
+  return { Pc: S.Pc * 1e5 * S.throttle / 100, Tc: S.Tc, Mw: S.Mw, alt: S.alt * 1000, mach: S.mach };
+}
+let theoryCache = null;
+function theoryNow() {
+  const t = liveTargets();
+  theoryCache = nozzleTheory({ Pc: t.Pc, Tc: t.Tc, gamma: S.gamma, Mw: t.Mw, Dt: S.Dt / 1000, De: Math.max(S.De, S.Dt * 1.02) / 1000, pa: atmosphere(t.alt).p });
+  return theoryCache;
+}
+
+function restart() {
+  if (!solver) return;
+  const cfg = cfgFromS();
+  const newSetup = buildSimSetup(cfg);
+  const gridChanged = !setup || setup.Nx !== newSetup.Nx || setup.Nr !== newSetup.Nr;
+  setup = newSetup;
+  try {
+    if (gridChanged) { solver.resize(setup.Nx, setup.Nr); renderer.resize(setup.Nx, setup.Nr); }
+  } catch (e) { showMsg('<b>Grid too large for this GPU.</b><br>' + e.message); return; }
+  solver.setGeometry(setup.geo);
+  const init = setup.initialState();
+  solver.setState(init.A, init.B);
+  renderer.resetParticles();
+  pStartSi = setup.atm.p;
+  live = liveTargets();
+  P = setup.P;
+  stepsTotal = 0; simTime = 0; perf = null; chamber = null; lastReadT = -1; axisData = null; readGen++; probeData = null; budget = Math.max(2, Math.min(budget, 6));
+  if (gridChanged || !view.fitted) fitView();
+  refreshHints();
+}
+let geoTimer = null;
+function remesh() {
+  clearTimeout(geoTimer);
+  geoTimer = setTimeout(() => {
+    if (!setup) return;
+    const cfg = cfgFromS();
+    cfg.dx = setup.dx;                 // keep the grid so the flow can carry on
+    const ns = buildSimSetup(cfg);
+    if (ns.Nx !== setup.Nx || ns.Nr !== setup.Nr) { restart(); return; }
+    setup = ns;
+    solver.setGeometry(setup.geo);
+    refreshHints();
+  }, 40);
+}
+let resetTimer = null;
+function restartSoon() { clearTimeout(resetTimer); resetTimer = setTimeout(restart, 150); }
+
+function fitDomain() {
+  const c = buildContour(cfgFromS());
+  const t = theoryNow();
+  // plume length scales with exit diameter and how under-expanded it is
+  const plume = 2 * c.Re * Math.max(6, Math.min(16, 6 + 2.5 * Math.log10(Math.max(t.ratio, 1)) * 3));
+  S.domainL = Math.round(Math.min(8, Math.max(0.1, (c.xe + plume) * 1.05)) * 20) / 20;
+  syncControl('domainL');
+  restart();
+}
+
+// Apply smoothed live parameters; rescale ambient region when altitude / speed change
+function applyLive(dtWall) {
+  if (!setup) return;
+  const tg = liveTargets();
+  const k = 1 - Math.exp(-dtWall * 5);
+  const prev = { ...live };
+  for (const key of Object.keys(tg)) {
+    live[key] += (tg[key] - live[key]) * k;
+    if (Math.abs(tg[key] - live[key]) < 1e-6 * Math.max(1, Math.abs(tg[key]))) live[key] = tg[key];
+  }
+  const cfg = cfgFromS();
+  cfg.alt = live.alt; cfg.mach = live.mach; cfg.Tc = live.Tc; cfg.Mw = live.Mw;
+  const newP = computeParams(cfg, setup.contour, setup.dx, live.Pc, pStartSi);
+  if (P && (prev.alt !== live.alt || prev.mach !== live.mach)) {
+    const fp = newP.amb[3] / P.amb[3];
+    const fT = (newP.Ta) / (P.Ta);
+    const du = newP.amb[1] - P.amb[1];
+    if (Math.abs(fp - 1) > 1e-7 || Math.abs(fT - 1) > 1e-7 || Math.abs(du) > 1e-7) solver.rescaleAmbient(fp, fT, du, newP);
+  }
+  P = newP;
+}
+
+// ---------------------------------------------------------------------------
+// View transform
+// ---------------------------------------------------------------------------
+function resizeCanvas() {
+  const r = $('viewport').getBoundingClientRect();
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  const W = Math.max(64, Math.round(r.width * dpr)), H = Math.max(64, Math.round(r.height * dpr));
+  if (glCanvas.width !== W || glCanvas.height !== H) {
+    glCanvas.width = ovCanvas.width = W; glCanvas.height = ovCanvas.height = H;
+    if (view.fitted) fitView();
+  }
+}
+function fitView() {
+  if (!setup) return;
+  const W = glCanvas.width, H = glCanvas.height;
+  const y0 = S.mirror ? -setup.Nr : 0, y1 = setup.Nr;
+  view.zoom = Math.min(W / setup.Nx, H / ((y1 - y0) * 0.82));
+  view.cx = setup.Nx / 2;
+  view.cy = S.mirror ? 0 : Math.min(setup.Nr / 2, H / view.zoom / 2);
+  view.fitted = true;
+  clampView();
+}
+function clampView() {
+  if (!setup) return;
+  const W = glCanvas.width, H = glCanvas.height;
+  const hw = W / view.zoom / 2, hh = H / view.zoom / 2;
+  view.cx = Math.min(Math.max(view.cx, Math.min(hw, setup.Nx / 2)), Math.max(setup.Nx - hw, setup.Nx / 2));
+  const yMin = S.mirror ? -setup.Nr : 0;
+  view.cy = Math.min(Math.max(view.cy, Math.min(yMin + hh, (yMin + setup.Nr) / 2)), Math.max(setup.Nr - hh, (yMin + setup.Nr) / 2));
+}
+function viewVec() {
+  const W = glCanvas.width, H = glCanvas.height;
+  return [view.cx - W / view.zoom / 2, view.cy - H / view.zoom / 2, W / view.zoom, H / view.zoom];
+}
+function screenToCell(px, py) {
+  const v = viewVec(), W = glCanvas.width, H = glCanvas.height;
+  return [v[0] + px / W * v[2], v[1] + (1 - py / H) * v[3]];
+}
+function cellToScreen(x, y, v) {
+  const W = glCanvas.width, H = glCanvas.height;
+  return [(x - v[0]) / v[2] * W, H - (y - v[1]) / v[3] * H];
+}
+
+// ---------------------------------------------------------------------------
+// Display parameters
+// ---------------------------------------------------------------------------
+function fieldIndex() { return FIELDS.findIndex(f => f.id === S.field); }
+function displayRange(field = S.field) {
+  const t = theoryCache || theoryNow();
+  const Ta = atmosphere(live ? live.alt : S.alt * 1000).T;
+  const Tc = live ? live.Tc : S.Tc;
+  const pa = atmosphere(live ? live.alt : S.alt * 1000).p;
+  const Pc = live ? live.Pc : S.Pc * 1e5;
+  switch (field) {
+    case 'temp': return { r: [Math.min(0.75 * t.Te, 0.9 * Ta), 1.04 * Math.max(Tc, Ta)], unit: 'K', d: 0 };
+    case 'mach': return { r: [0, Math.max(1.5, t.Me * 1.3 + S.mach)], unit: '', d: 1 };
+    case 'pres': { const lo = Math.log10(Math.max(Math.min(t.pe, pa) * 0.08, 1)); return { r: [lo, Math.log10(Pc * 1.05)], unit: 'Pa', log: true, d: 0 }; }
+    case 'dens': { const R = RU / S.Mw; const rc = Pc / (R * Tc); const re = t.pe / (R * t.Te); const ra = pa / (R_AIR * Ta);
+      return { r: [Math.log10(Math.min(re, ra) * 0.08), Math.log10(rc * 1.05)], unit: 'kg/m³', log: true, d: 3 }; }
+    case 'vel': return { r: [0, Math.max(t.uLim * 0.95, 1) + S.mach * 340], unit: 'm/s', d: 0 };
+    case 'vort': return { r: [0, t.uLim / Math.max(t.At ** 0.5, 1e-3) * 0.6], unit: '1/s', d: 0, logish: true };
+    case 'exh': return { r: [0, 1], unit: '', d: 2 };
+    default: return { r: [0, 1], unit: '', d: 1 };
+  }
+}
+function V() {
+  const dr = displayRange();
+  const split = S.split && S.mirror;
+  return {
+    gamma: S.gamma, fieldIndex: fieldIndex(), range: dr.r, ReN: P.ReN, RaN: P.RaN,
+    split, fieldIndex2: FIELDS.findIndex(f => f.id === S.field2), range2: displayRange(S.field2).r,
+    Tc: live.Tc, Ta: P.Ta, schlGain: S.schlGain, dx: setup.dx,
+    view: viewVec(), mirror: S.mirror, sonic: +S.sonic, bg: (S.field === 'flame' || (S.split && S.field2 === 'flame')) ? [0.012, 0.016, 0.035] : [0.02, 0.025, 0.05],
+    flameGain: S.flameGain, particles: S.particles, particleSize: Math.max(1.2, Math.min(2.4, view.zoom * 0.7)) * (window.devicePixelRatio > 1 ? 1.4 : 1),
+    particleAge: 220, spdRef: P.uLimN,
+    glow: S.glow && S.glowK > 0, glowK: S.glowK * (S.field === 'flame' ? 0.75 : 0.55), glowThr: S.field === 'flame' ? 0.5 : 0.55,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Overlay: nozzle, axis, colour bar, scale bar, probe
+// ---------------------------------------------------------------------------
+const cbarCache = {};
+function colorbarImage(field) {
+  const id = field === 'flame' ? 'flame' : S.cmap;
+  if (cbarCache[id]) return cbarCache[id];
+  const c = document.createElement('canvas'); c.width = 256; c.height = 1;
+  const x = c.getContext('2d'); const im = x.createImageData(256, 1);
+  im.data.set(lutData(COLORMAPS[id] || COLORMAPS.plasma));
+  x.putImageData(im, 0, 0);
+  cbarCache[id] = c;
+  return c;
+}
+function drawColorbar(field, bx, by, bw, dpr, tag) {
+  const dr = displayRange(field), bh = 7 * dpr;
+  ov.fillStyle = 'rgba(5,7,12,0.55)'; ov.fillRect(bx - 8 * dpr, by - 20 * dpr, bw + 16 * dpr, bh + 36 * dpr);
+  ov.imageSmoothingEnabled = true;
+  ov.drawImage(colorbarImage(field), bx, by, bw, bh);
+  ov.font = `${10 * dpr}px ${getComputedStyle(document.body).getPropertyValue('--mono')}`;
+  ov.fillStyle = 'rgba(200,210,230,0.75)'; ov.textBaseline = 'bottom';
+  const lab = (val) => {
+    if (dr.log) { const p = Math.pow(10, val); return p >= 1e5 ? fmt(p / 1e5, 2) + ' bar' : p >= 1000 ? fmt(p / 1000, 1) + ' k' : fmt(p, p < 1 ? 3 : 0); }
+    return fmt(val, dr.d);
+  };
+  let lo, hi, name = (tag ? tag + ' ' : '') + FIELDS.find(f => f.id === field).label.toUpperCase();
+  if (field === 'schl') { lo = 'uniform'; hi = 'steep ∇ρ'; }
+  else if (field === 'flame') { lo = 'cold'; hi = 'hot exhaust'; }
+  else if (field === 'exh') { lo = 'ambient air'; hi = 'pure exhaust'; }
+  else if (field === 'vort') { lo = '0'; hi = 'strong shear'; }
+  else { lo = lab(dr.r[0]); hi = lab(dr.r[1]) + (dr.unit && !dr.log ? ' ' + dr.unit : dr.log && field === 'dens' ? ' kg/m³' : ''); }
+  ov.textAlign = 'left'; ov.fillText(name, bx, by - 6 * dpr);
+  ov.textBaseline = 'top';
+  ov.fillText(lo, bx, by + bh + 4 * dpr);
+  ov.textAlign = 'right'; ov.fillText(hi, bx + bw, by + bh + 4 * dpr);
+}
+function drawOverlay() {
+  const W = ovCanvas.width, H = ovCanvas.height, dpr = Math.min(window.devicePixelRatio || 1, 2);
+  ov.clearRect(0, 0, W, H);
+  if (!setup) return;
+  const v = viewVec(), dx = setup.dx, c = setup.contour, tw = setup.tw;
+  const signs = S.mirror ? [1, -1] : [1];
+  // axis
+  ov.save();
+  ov.setLineDash([4 * dpr, 6 * dpr]); ov.strokeStyle = 'rgba(160,175,200,0.18)'; ov.lineWidth = dpr;
+  let a = cellToScreen(0, 0, v), b = cellToScreen(setup.Nx, 0, v);
+  ov.beginPath(); ov.moveTo(a[0], a[1]); ov.lineTo(b[0], b[1]); ov.stroke();
+  ov.restore();
+  // nozzle walls (+ body)
+  for (const s of signs) {
+    ov.beginPath();
+    let first = true;
+    for (const [x, r] of c.pts) { const p = cellToScreen(x / dx, s * r / dx, v); if (first) { ov.moveTo(p[0], p[1]); first = false; } else ov.lineTo(p[0], p[1]); }
+    for (let k = c.pts.length - 1; k >= 0; k--) { const [x, r] = c.pts[k]; const p = cellToScreen(x / dx, s * (r + tw) / dx, v); ov.lineTo(p[0], p[1]); }
+    ov.closePath();
+    ov.fillStyle = '#0b0d13'; ov.fill();
+    ov.strokeStyle = 'rgba(170,185,210,0.75)'; ov.lineWidth = 1.2 * dpr; ov.stroke();
+    if (S.base) {
+      ov.beginPath();
+      const xb = setup.xBase;
+      let p = cellToScreen(0, s * setup.bodyR / dx, v); ov.moveTo(p[0], p[1]);
+      p = cellToScreen(xb / dx, s * setup.bodyR / dx, v); ov.lineTo(p[0], p[1]);
+      for (let k = c.pts.length - 1; k >= 0; k--) { const [x, r] = c.pts[k]; if (x > xb) continue; p = cellToScreen(x / dx, s * (r + tw * 0.5) / dx, v); ov.lineTo(p[0], p[1]); }
+      p = cellToScreen(0, s * (c.Rc + tw * 0.5) / dx, v); ov.lineTo(p[0], p[1]);
+      ov.closePath(); ov.fillStyle = '#0b0d13'; ov.fill(); ov.strokeStyle = 'rgba(170,185,210,0.55)'; ov.stroke();
+    }
+  }
+  if (S.centerPlot) drawCenterPlot(v, W, H, dpr);
+  // colour bar(s)
+  const bw = Math.min(240 * dpr, W * 0.26), by = H - 30 * dpr;
+  const split = S.split && S.mirror;
+  drawColorbar(S.field, 16 * dpr, by, bw, dpr, split ? '▲' : '');
+  if (split) drawColorbar(S.field2, 16 * dpr + bw + 30 * dpr, by, bw, dpr, '▼');
+  // scale bar
+  const mPerPx = (v[2] / W) * dx;
+  const target = 140 * dpr * mPerPx;
+  const nice = [0.001, 0.002, 0.005, 0.01, 0.02, 0.05, 0.1, 0.2, 0.25, 0.5, 1, 2, 5].find(n => n >= target * 0.6) || 5;
+  const sl = nice / mPerPx, sx = W - 20 * dpr - sl, sy = H - 22 * dpr;
+  ov.strokeStyle = 'rgba(200,210,230,0.7)'; ov.lineWidth = 1.5 * dpr;
+  ov.beginPath(); ov.moveTo(sx, sy - 5 * dpr); ov.lineTo(sx, sy); ov.lineTo(sx + sl, sy); ov.lineTo(sx + sl, sy - 5 * dpr); ov.stroke();
+  ov.textAlign = 'center'; ov.textBaseline = 'bottom'; ov.fillStyle = 'rgba(200,210,230,0.75)';
+  ov.fillText(nice >= 1 ? nice + ' m' : fmt(nice * 1000, 0) + ' mm', sx + sl / 2, sy - 7 * dpr);
+  // ascent / mode banner
+  if (S.ascent || S.throttleSweep) {
+    ov.textAlign = 'center'; ov.textBaseline = 'top'; ov.fillStyle = 'rgba(92,242,168,0.85)';
+    const txt = (S.ascent ? `ASCENT  ·  ALT ${fmt(S.alt, 1)} km  ·  MACH ${fmt(S.mach, 2)}` : '') + (S.throttleSweep ? `${S.ascent ? '  ·  ' : ''}THROTTLE ${fmt(S.throttle, 0)} %` : '');
+    ov.fillText(txt, W / 2, 12 * dpr);
+  }
+  // probe crosshair
+  if (mouse.inside && !mouse.down) {
+    ov.strokeStyle = 'rgba(255,255,255,0.35)'; ov.lineWidth = dpr;
+    const px = mouse.x * dpr, py = mouse.y * dpr;
+    ov.beginPath(); ov.moveTo(px - 8 * dpr, py); ov.lineTo(px + 8 * dpr, py); ov.moveTo(px, py - 8 * dpr); ov.lineTo(px, py + 8 * dpr); ov.stroke();
+  }
+}
+
+// ---------------------------------------------------------------------------
+// HUD + readback
+// ---------------------------------------------------------------------------
+// Read-outs are time-averaged over ~60 µs of simulated time (like a test-stand
+// display), which hides chamber acoustic ringing without lagging real changes.
+const AVG_TAU = 6e-5;
+let lastReadT = -1;
+function smoothInto(avg, now, a) { if (!avg) return { ...now }; for (const k in now) avg[k] += (now[k] - avg[k]) * a; return avg; }
+function processStepInfo(si) {
+  if (isFinite(si[0]) && si[0] > 0) lastDt = si[0];
+  const tPrev = simTime;
+  simTime = si[2] * setup.tScale;
+  return tPrev;
+}
+function processMeasurements(tPrev, col, chA, chB) {
+  const pNow = exitPerformance(setup, col);
+  const cNow = cellPrimSI(setup, chA, chB);
+  if (simTime < tPrev || lastReadT < 0 || !perf || !chamber) { perf = { ...pNow }; chamber = { ...cNow }; }
+  else {
+    const a = 1 - Math.exp(-Math.max(0, simTime - tPrev) / AVG_TAU);
+    perf = smoothInto(perf, pNow, a); chamber = smoothInto(chamber, cNow, a);
+  }
+  lastReadT = simTime;
+}
+// synchronous version (used by single-step and the self-test)
+function readback() {
+  const tPrev = processStepInfo(solver.readStepInfo());
+  const col = solver.readColumn(setup.iExit);
+  const ch = solver.readCell(setup.iChamber, 0);
+  processMeasurements(tPrev, col, ch.A, ch.B);
+}
+let axisData = null;
+function processAxis(row) {
+  const g = S.gamma, n = setup.Nx;
+  const M = new Float32Array(n), pr = new Float32Array(n), solidRow = setup.mask.subarray(0, n);
+  for (let i = 0; i < n; i++) {
+    const k = i * 4, rho = Math.max(row[k], 1e-9), u = row[k + 1] / rho, v = row[k + 2] / rho;
+    const p = Math.max((g - 1) * (row[k + 3] - 0.5 * rho * (u * u + v * v)), 1e-9);
+    M[i] = Math.hypot(u, v) / Math.sqrt(g * p / rho); pr[i] = p * P_REF;
+  }
+  axisData = { M, pr, solidRow };
+}
+function readAxis() { processAxis(solver._readRect(solver.state.A, 0, 0, setup.Nx, 1)); }
+
+// Non-blocking read-back: one batched request in flight at a time, collected
+// when the GPU signals it is done (no pipeline stalls).
+let readGen = 0, probeCell = null, probeData = null;
+function asyncReadback() {
+  const res = solver.pollAsync();
+  if (res && res.tag === readGen) {
+    const d = res.data;
+    const tPrev = processStepInfo(d.step);
+    processMeasurements(tPrev, { A: d.colA, B: d.colB }, d.chA, d.chB);
+    if (d.axis) processAxis(d.axis);
+    if (d.prA) probeData = { cell: res.probe, q: cellPrimSI(setup, d.prA, d.prB) };
+  }
+  if (!solver._async) {
+    const st = solver.state, reqs = [
+      { name: 'step', tex: solver.stepInfoTex, x: 0, y: 0, w: 1, h: 1 },
+      { name: 'colA', tex: st.A, x: setup.iExit, y: 0, w: 1, h: setup.Nr },
+      { name: 'colB', tex: st.B, x: setup.iExit, y: 0, w: 1, h: setup.Nr },
+      { name: 'chA', tex: st.A, x: setup.iChamber, y: 0, w: 1, h: 1 },
+      { name: 'chB', tex: st.B, x: setup.iChamber, y: 0, w: 1, h: 1 },
+    ];
+    if (S.centerPlot) reqs.push({ name: 'axis', tex: st.A, x: 0, y: 0, w: setup.Nx, h: 1 });
+    const pc = probeCell;
+    if (pc) { reqs.push({ name: 'prA', tex: st.A, x: pc.i, y: pc.j, w: 1, h: 1 }, { name: 'prB', tex: st.B, x: pc.i, y: pc.j, w: 1, h: 1 }); }
+    if (solver.requestAsync(reqs, readGen) && pc) solver._async.probe = pc;
+  }
+}
+function drawCenterPlot(v, W, H, dpr) {
+  if (!axisData) return;
+  const ph = Math.round(H * 0.24), py0 = H - ph - 46 * dpr, py1 = py0 + ph;
+  ov.fillStyle = 'rgba(4,6,12,0.72)'; ov.fillRect(0, py0 - 18 * dpr, W, ph + 30 * dpr);
+  ov.strokeStyle = 'rgba(120,130,150,0.25)'; ov.lineWidth = dpr;
+  const t = theoryCache || theoryNow();
+  const Mmax = Math.max(1.5, t.Me * 1.35 + S.mach);
+  const pa = atmosphere(live.alt).p, lpMin = Math.log10(Math.max(Math.min(t.pe, pa) * 0.05, 1)), lpMax = Math.log10(live.Pc * 1.1);
+  const yM = m => py1 - Math.min(m / Mmax, 1.05) * ph;
+  const yP = p => py1 - (Math.log10(Math.max(p, 1)) - lpMin) / (lpMax - lpMin) * ph;
+  // grid: Mach 1 line and ambient pressure line
+  ov.setLineDash([3 * dpr, 4 * dpr]);
+  ov.beginPath(); ov.moveTo(0, yM(1)); ov.lineTo(W, yM(1)); ov.stroke();
+  ov.strokeStyle = 'rgba(255,181,71,0.25)';
+  ov.beginPath(); ov.moveTo(0, yP(pa)); ov.lineTo(W, yP(pa)); ov.stroke();
+  ov.setLineDash([]);
+  const n = setup.Nx, step = Math.max(1, Math.floor(n / W * 1.5));
+  const line = (arr, fy, col) => {
+    ov.strokeStyle = col; ov.lineWidth = 1.6 * dpr; ov.beginPath();
+    let pen = false;
+    for (let i = 0; i < n; i += step) {
+      if (axisData.solidRow[i]) { pen = false; continue; }
+      const x = cellToScreen(i + 0.5, 0, v)[0];
+      if (x < -5 || x > W + 5) { pen = false; continue; }
+      const y = fy(arr[i]);
+      if (!pen) { ov.moveTo(x, y); pen = true; } else ov.lineTo(x, y);
+    }
+    ov.stroke();
+  };
+  line(axisData.pr, yP, 'rgba(255,181,71,0.9)');
+  line(axisData.M, yM, 'rgba(63,208,255,0.95)');
+  ov.font = `${10 * dpr}px ${getComputedStyle(document.body).getPropertyValue('--mono')}`;
+  ov.textBaseline = 'top'; ov.textAlign = 'left';
+  ov.fillStyle = 'rgba(63,208,255,0.95)'; ov.fillText(`MACH ON AXIS (0–${fmt(Mmax, 1)})`, 12 * dpr, py0 - 14 * dpr);
+  ov.fillStyle = 'rgba(255,181,71,0.9)'; ov.fillText('PRESSURE (log)', 190 * dpr, py0 - 14 * dpr);
+  ov.fillStyle = 'rgba(200,210,230,0.5)'; ov.fillText('- - M = 1 / ambient p', 320 * dpr, py0 - 14 * dpr);
+}
+function fmtForce(F) { return Math.abs(F) >= 1e6 ? [fmt(F / 1e6, 2), 'MN'] : Math.abs(F) >= 1000 ? [fmt(F / 1000, Math.abs(F) >= 1e5 ? 0 : 2), 'kN'] : [fmt(F, 0), 'N']; }
+function setMetric(id, v, unit, sub) {
+  $('m-' + id).innerHTML = v + (unit ? `<small>${unit}</small>` : '');
+  if (sub !== undefined) $('s-' + id).textContent = sub;
+}
+function updateHUD() {
+  const t = theoryNow();
+  $('simtime').textContent = `T+ ${fmt(simTime * 1000, 3)} ms`;
+  $('fieldname').textContent = (S.split && S.mirror) ? `${FIELDS[fieldIndex()].label} ▲ · ${FIELDS.find(f => f.id === S.field2).label} ▼` : FIELDS[fieldIndex()].label + ' field';
+  $('solvestat').textContent = `SOLVE ${fmt(stepsPerSec, 0)} steps/s · ${fmt(fps, 0)} fps${running ? '' : ' · PAUSED'}`;
+  $('gridstat').innerHTML = `GRID ${setup.Nx} × ${setup.Nr} · Δx ${fmt(setup.dx * 1000, 2)} mm<br>` +
+    (isIntegrated() ? `<span style="color:var(--warn)">GPU ${gpuName} — integrated, see README</span>` : `GPU ${gpuName}`);
+  if (perf && chamber) {
+    const [fv, fu] = fmtForce(perf.F), [iv, iu] = fmtForce(t.F);
+    setMetric('thrust', fv, fu, `ideal ${iv} ${iu}`);
+    setMetric('mach', fmt(perf.Me, 2), '', `ideal ${fmt(t.Me, 2)}`);
+    setMetric('tc', fmt(chamber.T, 0), 'K', `target ${fmt(live.Tc, 0)} K`);
+    setMetric('pc', fmt(chamber.p / 1e6, chamber.p < 1e6 ? 2 : 1), 'MPa', `target ${fmt(live.Pc / 1e6, 2)} MPa · ${fmt(live.Pc / 1e5, 0)} bar`);
+    setMetric('isp', fmt(Math.max(perf.Isp, 0), 0), 's', `ideal ${fmt(t.Isp, 0)} s · vac ${fmt(t.IspVac, 0)} s`);
+    const ratio = perf.pe / Math.max(atmosphere(live.alt).p, 1e-9);
+    const mstate = atmosphere(live.alt).p < 1 ? 'vacuum' : ratio > 1.08 ? 'under-expanded' : ratio < 0.92 ? 'over-expanded' : 'near-ideal';
+    setMetric('ratio', atmosphere(live.alt).p < 1 ? '∞' : fmt(ratio, ratio < 10 ? 2 : 0), '', `${mstate.toUpperCase()} · theory ${fmt(t.ratio, 2)}` + (t.separation ? ' · sep. risk' : ''));
+  }
+}
+
+function updateTheoryPanel() {
+  const el = $('theory-body'); if (!el || !el.offsetParent) return;
+  const t = theoryNow();
+  const pa = atmosphere(live ? live.alt : S.alt * 1000).p;
+  const st = { 'under-expanded': 'under', 'over-expanded': 'over', 'near-ideal': 'ideal', vacuum: 'vac' }[t.state];
+  const row = (k, a, b) => `<tr><td>${k}</td><td class="n">${a}</td><td class="n">${b === undefined ? '' : b}</td></tr>`;
+  const [Fi, Fu] = fmtForce(t.F), [Fs, Fsu] = perf ? fmtForce(perf.F) : ['—', ''];
+  el.innerHTML = `
+    <div style="margin:4px 0 8px"><span class="state ${st}">${t.state.toUpperCase()}</span>
+      ${t.separation ? '<span class="state over" style="margin-left:6px">SEPARATION LIKELY</span>' : ''}</div>
+    <table class="th">
+      <tr class="head"><td></td><td class="n">1-D ideal</td><td class="n">simulated</td></tr>
+      ${row('Thrust', Fi + ' ' + Fu, perf ? Fs + ' ' + Fsu : '—')}
+      ${row('Mass flow', fmt(t.mdot, 3) + ' kg/s', perf ? fmt(perf.mdot, 3) + ' kg/s' : '—')}
+      ${row('Exit Mach', fmt(t.Me, 2), perf ? fmt(perf.Me, 2) : '—')}
+      ${row('Exit pressure', fmt(t.pe / 1000, 1) + ' kPa', perf ? fmt(perf.pe / 1000, 1) + ' kPa' : '—')}
+      ${row('Isp', fmt(t.Isp, 0) + ' s', perf ? fmt(perf.Isp, 0) + ' s' : '—')}
+      ${row('Chamber pressure', fmt((live ? live.Pc : 0) / 1e5, 1) + ' bar', chamber ? fmt(chamber.p / 1e5, 1) + ' bar' : '—')}
+      ${row('Chamber temp.', fmt(live ? live.Tc : 0, 0) + ' K', chamber ? fmt(chamber.T, 0) + ' K' : '—')}
+      <tr class="head"><td colspan="3" style="padding-top:10px">Ideal nozzle numbers</td></tr>
+      ${row('Expansion ratio ε', fmt(t.eps, 2))}
+      ${row('Optimum ε here', isFinite(t.epsOpt) ? fmt(t.epsOpt, 2) : '∞ (vacuum)')}
+      ${row('Pe / Pa', pa < 1 ? '∞' : fmt(t.ratio, 3))}
+      ${row('Thrust coefficient Cf', fmt(t.Cf, 3))}
+      ${row('Characteristic vel. c*', fmt(t.cstar, 0) + ' m/s')}
+      ${row('Exit velocity', fmt(t.ue, 0) + ' m/s')}
+      ${row('Exit temperature', fmt(t.Te, 0) + ' K')}
+      ${row('Vacuum Isp', fmt(t.IspVac, 0) + ' s')}
+      ${row('Vacuum thrust', fmtForce(t.Fvac).join(' '))}
+      ${row('Ambient pressure', fmt(pa / 1000, pa < 1000 ? 3 : 2) + ' kPa')}
+    </table>
+    <p class="note">"Simulated" values are measured at the nozzle exit plane by the solver once the start-up transient has passed (give it ~1 ms of sim time). The 1-D numbers assume uniform, parallel exit flow, so a few % difference is normal: real bells lose a little to divergence, and a coarse grid adds numerical loss.</p>
+    ${t.separation ? '<p class="note warn">Pe &lt; 0.4 Pa (Summerfield criterion): a real engine would likely suffer flow separation inside the bell. This inviscid model has no boundary layer, so it shows the shock pattern but not true separation.</p>' : ''}`;
+}
+
+// ---------------------------------------------------------------------------
+// Probe
+// ---------------------------------------------------------------------------
+function updateProbe() {
+  const el = $('probe');
+  if (!mouse.inside || mouse.down || !setup) { el.style.display = 'none'; probeCell = null; return; }
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  const [x, y] = screenToCell(mouse.x * dpr, mouse.y * dpr);
+  const i = Math.floor(x), j = Math.floor(Math.abs(y));
+  if (i < 0 || i >= setup.Nx || j >= setup.Nr) { el.style.display = 'none'; probeCell = null; return; }
+  const xm = (x * setup.dx), rm = (Math.abs(y) * setup.dx);
+  let txt;
+  if (setup.mask[j * setup.Nx + i]) { probeCell = null; txt = `wall\nx ${fmt(xm * 1000, 1)} mm  r ${fmt(rm * 1000, 1)} mm`; }
+  else {
+    probeCell = { i, j };
+    if (!probeData) { el.style.display = 'none'; return; }
+    const q = probeData.q;
+    txt = `x ${fmt(xm * 1000, 1)} mm   r ${fmt(rm * 1000, 1)} mm\n` +
+      `T    ${fmt(q.T, 0)} K\np    ${q.p >= 1e5 ? fmt(q.p / 1e5, 2) + ' bar' : fmt(q.p / 1000, 2) + ' kPa'}\n` +
+      `Mach ${fmt(q.M, 2)}\n|u|  ${fmt(Math.hypot(q.u, q.v), 0)} m/s\nρ    ${fmt(q.rho, q.rho < 1 ? 4 : 2)} kg/m³\nexh. ${fmt(q.Y * 100, 0)} %`;
+  }
+  el.textContent = txt;
+  el.style.display = 'block';
+  const vr = $('viewport').getBoundingClientRect();
+  let lx = mouse.x + 16, ly = mouse.y + 16;
+  if (lx + 190 > vr.width) lx = mouse.x - 200;
+  if (ly + 130 > vr.height) ly = mouse.y - 140;
+  el.style.left = lx + 'px'; el.style.top = ly + 'px';
+}
+
+// ---------------------------------------------------------------------------
+// Recording + screenshots
+// ---------------------------------------------------------------------------
+const recCanvas = document.createElement('canvas');
+const recCtx = recCanvas.getContext('2d');
+let recorder = null, recChunks = [], recStart = 0, shotPending = false;
+function recDims() {
+  switch (S.recSize) {
+    case '1080p': return [1920, 1080];
+    case '4k': return [3840, 2160];
+    case 'portrait': return [1080, 1920];
+    case 'square': return [1080, 1080];
+    default: return [glCanvas.width & ~1, glCanvas.height & ~1];
+  }
+}
+function composite() {
+  const [W, H] = recDims();
+  if (recCanvas.width !== W || recCanvas.height !== H) { recCanvas.width = W; recCanvas.height = H; }
+  const c = recCtx, mono = getComputedStyle(document.body).getPropertyValue('--mono');
+  c.fillStyle = '#06070b'; c.fillRect(0, 0, W, H);
+  const gw = glCanvas.width, gh = glCanvas.height;
+  const portrait = H > W * 1.2, square = Math.abs(H - W) < 10;
+  const u = Math.min(W, H) / 1080;          // UI scale unit
+  let rx, ry, rw, rh, hudY;
+  if (portrait || square) {
+    rw = W; rh = Math.min(H * (square ? 0.62 : 0.5), W * gh / gw);
+    rx = 0; ry = square ? H * 0.1 : (H - rh) / 2 - H * 0.04; hudY = ry + rh + 40 * u;
+    // crop the source to the target aspect (centre)
+    const sa = rw / rh, sw = Math.min(gw, gh * sa), sh = sw / sa;
+    const sx = (gw - sw) / 2, sy = (gh - sh) / 2;
+    c.drawImage(glCanvas, sx, sy, sw, sh, rx, ry, rw, rh);
+    c.drawImage(ovCanvas, sx, sy, sw, sh, rx, ry, rw, rh);
+  } else {
+    rx = 0; ry = 0; rw = W; rh = Math.round(H - 175 * u);
+    const sa = rw / rh, sw = Math.min(gw, gh * sa), sh = sw / sa;
+    const sx = (gw - sw) / 2, sy = (gh - sh) / 2;
+    c.drawImage(glCanvas, sx, sy, sw, sh, 0, 0, rw, rh);
+    c.drawImage(ovCanvas, sx, sy, sw, sh, 0, 0, rw, rh);
+    hudY = rh + 14 * u;
+  }
+  // header
+  c.textBaseline = 'top'; c.textAlign = 'left';
+  c.fillStyle = 'rgba(200,210,230,0.6)'; c.font = `${20 * u}px ${mono}`;
+  const pad = 36 * u;
+  const headY = portrait ? ry - 70 * u : square ? ry - 70 * u : pad;
+  c.fillText(`T+ ${fmt(simTime * 1000, 2)} ms`, pad, headY);
+  c.fillText((S.split && S.mirror) ? `${FIELDS[fieldIndex()].label.toUpperCase()} ▲  ·  ${FIELDS.find(f => f.id === S.field2).label.toUpperCase()} ▼` : FIELDS[fieldIndex()].label.toUpperCase() + ' FIELD', pad, headY + 28 * u);
+  c.textAlign = 'right';
+  c.fillText((S.ascent ? `ALT ${fmt(S.alt, 1)} km · M ${fmt(S.mach, 2)}` : `ALT ${fmt(S.alt, 1)} km`), W - pad, headY);
+  // metrics
+  const t = theoryCache || theoryNow();
+  const met = perf && chamber ? [
+    ['THRUST', ...fmtForce(perf.F)], ['MACH', fmt(perf.Me, 2), ''], ['CHAMBER', fmt(chamber.T, 0), 'K'], ['Pc', fmt(chamber.p / 1e6, 1), 'MPa'],
+  ] : [['THRUST', '—', ''], ['MACH', '—', ''], ['CHAMBER', '—', ''], ['Pc', '—', '']];
+  const colW = (W - 2 * pad) / met.length;
+  c.strokeStyle = 'rgba(120,130,150,0.35)'; c.lineWidth = Math.max(1, u * 1.5);
+  c.beginPath(); c.moveTo(pad, hudY); c.lineTo(W - pad, hudY); c.stroke();
+  met.forEach((m, k) => {
+    const x = pad + k * colW;
+    c.textAlign = 'left'; c.fillStyle = 'rgba(150,160,180,0.7)'; c.font = `${16 * u}px ${mono}`;
+    c.fillText(m[0], x, hudY + 18 * u);
+    c.fillStyle = '#e8edf6'; c.font = `${44 * u}px ${mono}`;
+    c.fillText(m[1], x, hudY + 42 * u);
+    const w = c.measureText(m[1]).width;
+    c.fillStyle = 'rgba(150,160,180,0.8)'; c.font = `${16 * u}px ${mono}`;
+    c.fillText(m[2], x + w + 6 * u, hudY + 66 * u);
+  });
+  c.textAlign = 'left'; c.fillStyle = 'rgba(150,160,180,0.55)'; c.font = `${15 * u}px ${mono}`;
+  const footY = portrait || square ? hudY + 130 * u : H - 30 * u;
+  c.fillText('PLUME LAB  ·  ROCKET NOZZLE FLOW', pad, footY);
+  c.textAlign = 'right';
+  c.fillText('2D axisymmetric · inviscid · frozen-γ', W - pad, footY);
+  return recCanvas;
+}
+function stamp() { const d = new Date(), p = n => String(n).padStart(2, '0'); return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}_${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`; }
+function download(blob, name) {
+  const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name;
+  document.body.appendChild(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 2000);
+}
+function toggleRecord() {
+  if (recorder) { recorder.stop(); return; }
+  if (!window.MediaRecorder) { alert('Recording is not supported in this browser — use Chrome or Edge.'); return; }
+  composite();
+  const types = ['video/mp4;codecs=avc1.640033', 'video/mp4;codecs=avc1.4d0033', 'video/mp4;codecs=avc1', 'video/mp4', 'video/webm;codecs=vp9', 'video/webm'];
+  const mime = types.find(t => MediaRecorder.isTypeSupported(t)) || '';
+  const stream = recCanvas.captureStream(60);
+  const px = recCanvas.width * recCanvas.height;
+  recorder = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: Math.round(Math.min(60e6, Math.max(8e6, px * 12))) });
+  recChunks = [];
+  recorder.ondataavailable = e => { if (e.data && e.data.size) recChunks.push(e.data); };
+  recorder.onstop = () => {
+    const ext = (recorder.mimeType || mime).includes('mp4') ? 'mp4' : 'webm';
+    download(new Blob(recChunks, { type: recorder.mimeType || mime }), `plume_${stamp()}.${ext}`);
+    recorder = null; $('b-rec').classList.remove('on'); $('b-rec').textContent = '● Record';
+  };
+  recorder.start(250);
+  recStart = performance.now();
+  $('b-rec').classList.add('on');
+}
+
+// ---------------------------------------------------------------------------
+// Modes
+// ---------------------------------------------------------------------------
+let ascentT = 0, sweepT = 0;
+function updateModes(dt) {
+  if (S.ascent) {
+    ascentT += dt;
+    const s = Math.min(1, ascentT / S.ascentDur);
+    S.alt = Math.round(S.ascentTop * Math.pow(s, 1.5) * 100) / 100;
+    if (S.ascentMach) S.mach = Math.round(S.ascentMachTop * Math.pow(s, 1.1) * 100) / 100;
+    syncControl('alt'); syncControl('mach');
+    if (s >= 1) { S.ascent = false; syncControl('ascent'); refreshVisibility(); }
+  }
+  if (S.throttleSweep) {
+    sweepT += dt;
+    S.throttle = Math.round(70 + 30 * Math.cos(2 * Math.PI * sweepT / 8));
+    syncControl('throttle');
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Main loop
+// ---------------------------------------------------------------------------
+// GPU-load-aware step budget: a fence is placed after each frame's work. If the
+// previous frames' fences have all completed when a new frame starts, the GPU
+// has spare time -> add steps; if work is piling up -> back off. Works at any
+// display refresh rate (60/144 Hz, or 30 fps under the browser's energy saver).
+let frameFences = [];
+function adaptBudget() {
+  while (frameFences.length && gl.getSyncParameter(frameFences[0], gl.SYNC_STATUS) === gl.SIGNALED) gl.deleteSync(frameFences.shift());
+  while (frameFences.length > 6) gl.deleteSync(frameFences.shift());
+  const pending = frameFences.length;
+  if (!running || selfTestRunning) return;
+  if (pending >= 2) { slowFrames++; if (slowFrames >= 2) { budget = Math.max(1, budget * 0.8); slowFrames = 0; } }
+  else { slowFrames = 0; if (pending === 0) budget = Math.min(S.speed, budget * 1.06 + 0.5); }
+}
+function frame(now) {
+  requestAnimationFrame(frame);
+  if (!setup || contextLost || gl.isContextLost()) return;
+  adaptBudget();
+  const dtWall = Math.min(0.1, (now - lastFrameT) / 1000);
+  lastFrameT = now;
+  resizeCanvas();
+  updateModes(dtWall);
+  applyLive(dtWall);
+  let n = 0;
+  if (running || stepOnce) {
+    n = stepOnce ? S.speed : Math.max(1, Math.min(S.speed, Math.round(budget)));
+    solver.step(n, P);
+    stepsTotal += n; stepsWindow += n;
+    stepOnce = false;
+  }
+  asyncReadback();
+  if (S.particles && n > 0) renderer.advectParticles(lastDt * n, [setup.contour.Lc / setup.dx, setup.contour.Rc / setup.dx, 0.8, 220]);
+  const v = V();
+  renderer.derive(v);
+  if (v.split) renderer.derive(v, true);
+  renderer.display(v, glCanvas.width, glCanvas.height);
+  drawOverlay();
+  updateProbe();
+  if (recorder || shotPending) {
+    const cv = composite();
+    if (shotPending) { shotPending = false; cv.toBlob(b => download(b, `plume_${stamp()}.png`), 'image/png'); }
+    if (recorder) $('b-rec').textContent = `■ Stop ${fmt((now - recStart) / 1000, 0)}s`;
+  }
+  minFrameDt = Math.min(minFrameDt * 1.003, Math.max(dtWall, 0.004));   // info only
+  frameFences.push(gl.fenceSync(gl.SYNC_GPU_COMMANDS_COMPLETE, 0));
+  frameNo++; fpsWindow++;
+  if (now - statT > 1000) {
+    stepsPerSec = stepsWindow * 1000 / (now - statT); fps = fpsWindow * 1000 / (now - statT);
+    stepsWindow = 0; fpsWindow = 0; statT = now;
+    $('speedval').textContent = (Math.round(budget) < S.speed && running) ? `${Math.round(budget)}/${S.speed} st/fr` : `${S.speed} st/fr`;
+  }
+  if (frameNo % 6 === 0) updateHUD();
+  if (frameNo % 15 === 0) updateTheoryPanel();
+}
+let stepOnce = false;
+
+// ---------------------------------------------------------------------------
+// UI construction
+// ---------------------------------------------------------------------------
+const rows = {};   // key -> {el, input, valInput, item}
+function buildPanel() {
+  const body = $('panel-body');
+  for (const sec of CONTROLS) {
+    const d = document.createElement('details'); d.className = 'sec'; d.open = !!sec.open;
+    d.innerHTML = `<summary>${sec.section}</summary>`;
+    const sb = document.createElement('div'); sb.className = 'sec-body'; d.appendChild(sb);
+    if (sec.custom === 'theory') { sb.innerHTML = '<div id="theory-body"></div>'; d.addEventListener('toggle', updateTheoryPanel); }
+    if (sec.custom === 'help') sb.innerHTML = HELP_HTML;
+    for (const it of sec.items || []) sb.appendChild(buildRow(it));
+    if (sec.customAfter === 'recnote') {
+      const n = document.createElement('p'); n.className = 'note';
+      n.innerHTML = 'Press <span class="kbd">● Record</span> (or <span class="kbd">V</span>) to capture what you see, with the readouts burned in, and again to stop. The file downloads as MP4 where your browser supports it (current Chrome/Edge), otherwise WebM. Screenshots (<span class="kbd">S</span>) use the same frame.';
+      sb.appendChild(n);
+    }
+    body.appendChild(d);
+  }
+  refreshVisibility(); refreshHints();
+}
+function buildRow(it) {
+  const row = document.createElement('div'); row.className = 'row';
+  const liveTag = it.kind === 'live' ? '<span class="live">LIVE</span>' : '';
+  if (it.type === 'toggle') {
+    row.className = 'row toggle';
+    row.innerHTML = `<span class="name">${it.label}</span><input type="checkbox">`;
+    const inp = row.querySelector('input'); inp.checked = !!S[it.key];
+    inp.addEventListener('change', () => { S[it.key] = inp.checked; onChange(it); });
+    row.addEventListener('click', e => { if (e.target !== inp) { inp.checked = !inp.checked; inp.dispatchEvent(new Event('change')); } });
+    rows[it.key] = { el: row, input: inp, item: it };
+  } else if (it.type === 'select') {
+    row.innerHTML = `<div class="top"><span class="name">${it.label}</span></div><select></select><div class="hint"></div>`;
+    const sel = row.querySelector('select');
+    for (const [v, l] of it.options) { const o = document.createElement('option'); o.value = v; o.textContent = l; sel.appendChild(o); }
+    sel.value = S[it.key];
+    sel.addEventListener('change', () => { S[it.key] = typeof S[it.key] === 'number' ? +sel.value : sel.value; onChange(it); });
+    rows[it.key] = { el: row, input: sel, item: it };
+  } else if (it.type === 'seg') {
+    row.innerHTML = `<div class="top"><span class="name">${it.label}</span></div><div class="seg"></div>`;
+    const seg = row.querySelector('.seg');
+    for (const [v, l] of it.options) {
+      const b = document.createElement('button'); b.textContent = l; b.dataset.v = v;
+      b.addEventListener('click', () => { S[it.key] = typeof it.options[0][0] === 'number' ? +v : v; syncControl(it.key); onChange(it); });
+      seg.appendChild(b);
+    }
+    rows[it.key] = { el: row, seg, item: it };
+  } else if (it.type === 'button') {
+    row.innerHTML = `<button class="btn" style="width:100%">${it.label}</button>`;
+    row.querySelector('button').addEventListener('click', it.action);
+    rows[it.key] = { el: row, item: it };
+  } else {
+    row.innerHTML = `<div class="top"><span class="name">${it.label}${liveTag}</span><span class="val"><input type="text"><span class="u">${it.unit || ''}</span></span></div>
+      <input type="range" min="${it.min}" max="${it.max}" step="${it.step}"><div class="hint"></div>`;
+    const rng = row.querySelector('input[type=range]'), num = row.querySelector('.val input');
+    rng.value = S[it.key]; num.value = fmt(S[it.key], it.d).replace(/,/g, '');
+    rng.addEventListener('input', () => { S[it.key] = +rng.value; num.value = fmt(S[it.key], it.d).replace(/,/g, ''); onChange(it); });
+    num.addEventListener('change', () => {
+      let v = parseFloat(num.value); if (!isFinite(v)) v = S[it.key];
+      v = Math.min(it.max * 4, Math.max(it.min * 0.25, v));
+      S[it.key] = v; rng.value = v; num.value = fmt(v, it.d).replace(/,/g, ''); onChange(it);
+    });
+    num.addEventListener('keydown', e => e.stopPropagation());
+    rows[it.key] = { el: row, input: rng, num, item: it };
+  }
+  return row;
+}
+function syncControl(key) {
+  const r = rows[key]; if (!r) return;
+  const it = r.item;
+  if (it.type === 'toggle') r.input.checked = !!S[key];
+  else if (it.type === 'select') r.input.value = S[key];
+  else if (it.type === 'seg') r.seg.querySelectorAll('button').forEach(b => b.classList.toggle('on', String(b.dataset.v) === String(S[key])));
+  else if (r.num) { r.input.value = S[key]; if (document.activeElement !== r.num) r.num.value = fmt(S[key], it.d).replace(/,/g, ''); }
+}
+function refreshVisibility() {
+  for (const k in rows) { const it = rows[k].item; rows[k].el.style.display = it.show && !it.show() ? 'none' : ''; }
+}
+function refreshHints() {
+  for (const k in rows) {
+    const it = rows[k].item, h = rows[k].el.querySelector('.hint');
+    if (h) h.textContent = it.hint ? it.hint() : (it.kind === 'next' ? 'Applies when you press Restart' : '');
+  }
+}
+function onChange(it) {
+  switch (it.kind) {
+    case 'geo': remesh(); S.preset = 'custom'; break;
+    case 'reset': restartSoon(); break;
+    case 'live': S.preset = 'custom'; break;
+    case 'live2': if (setup) setup.cfg.cfl = S.cfl; break;
+    case 'prop': {
+      const p = PROPELLANTS[S.prop];
+      if (S.prop !== 'custom') {
+        const gChanged = Math.abs(p.gamma - S.gamma) > 1e-9;
+        S.Tc = p.Tc; S.gamma = p.gamma; S.Mw = p.Mw;
+        ['Tc', 'gamma', 'Mw'].forEach(syncControl);
+        if (gChanged) restartSoon();
+      }
+      break;
+    }
+    case 'mode': ascentT = 0; sweepT = 0; if (!S.throttleSweep && it.key === 'throttleSweep') { S.throttle = 100; syncControl('throttle'); } break;
+  }
+  if (['Tc', 'gamma', 'Mw'].includes(it.key) && S.prop !== 'custom') { S.prop = 'custom'; syncControl('prop'); }
+  if (it.key === 'split' && S.split && !S.mirror) { S.mirror = true; syncControl('mirror'); view.fitted = false; fitView(); }
+  if (it.key === 'mirror') { if (!S.mirror && S.split) { S.split = false; syncControl('split'); } view.fitted = false; fitView(); }
+  if (it.key === 'cmap') renderer.setColormap(S.cmap);
+  refreshVisibility(); refreshHints();
+  saveSettings();
+}
+
+function applyPreset(key) {
+  const e = ENGINE_PRESETS[key]; if (!e) return;
+  const p = PROPELLANTS[e.prop];
+  Object.assign(S, { preset: key, prop: e.prop, Tc: p.Tc, gamma: p.gamma, Mw: p.Mw, Pc: e.Pc, throttle: 100, Dt: e.Dt, De: e.De,
+    type: e.type, bellPct: e.bellPct, coneAngle: e.coneAngle, CR: e.CR, chamberLen: e.chamberLen, alt: e.alt, mach: e.mach,
+    base: e.base, domainL: e.domain, ascent: false, throttleSweep: false });
+  for (const k in rows) syncControl(k);
+  refreshVisibility();
+  view.fitted = false;
+  restart();
+  if (e.field) setField(e.field);
+  saveSettings();
+}
+
+function buildTabs() {
+  const tabs = $('tabs');
+  FIELDS.forEach((f, k) => {
+    const b = document.createElement('button'); b.className = 'tab'; b.textContent = f.label.replace(' (log)', '').replace(' (visual)', '');
+    b.title = `${f.label}  [${k + 1}]`;
+    b.addEventListener('click', () => setField(f.id));
+    b.dataset.f = f.id; tabs.appendChild(b);
+  });
+}
+function setField(id) {
+  S.field = id;
+  saveSettings();
+  document.querySelectorAll('.tab').forEach(b => b.classList.toggle('on', b.dataset.f === id));
+  refreshVisibility();
+  if (setup) updateHUD();
+}
+
+function setRunning(r) {
+  running = r;
+  $('b-play').textContent = running ? '❚❚ Pause' : '▶ Play';
+  $('b-play').classList.toggle('primary', running);
+}
+
+// ---------------------------------------------------------------------------
+// Events
+// ---------------------------------------------------------------------------
+function bindEvents() {
+  $('b-play').onclick = () => setRunning(!running);
+  $('b-restart').onclick = () => { restart(); };
+  $('b-step').onclick = () => { setRunning(false); stepOnce = true; };
+  $('b-rec').onclick = toggleRecord;
+  $('b-shot').onclick = () => { shotPending = true; };
+  $('b-panel').onclick = () => { $('panel').classList.toggle('hidden'); setTimeout(() => { resizeCanvas(); fitView(); }, 30); };
+  const sp = $('speed');
+  sp.value = S.speed;
+  sp.oninput = () => { S.speed = +sp.value; budget = Math.min(budget, S.speed); $('speedval').textContent = `${S.speed} st/fr`; saveSettings(); };
+  const sel = $('preset');
+  for (const [k, e] of Object.entries(ENGINE_PRESETS)) { const o = document.createElement('option'); o.value = k; o.textContent = e.name; sel.appendChild(o); }
+  const oc = document.createElement('option'); oc.value = 'custom'; oc.textContent = 'Custom (your settings)'; oc.disabled = true; sel.appendChild(oc);
+  sel.value = S.preset;
+  sel.onchange = () => applyPreset(sel.value);
+  setInterval(() => { if (sel.value !== S.preset) sel.value = S.preset; }, 300);
+
+  const vp = $('viewport');
+  vp.addEventListener('mousemove', e => {
+    const r = vp.getBoundingClientRect();
+    const x = e.clientX - r.left, y = e.clientY - r.top;
+    if (mouse.down) {
+      const dpr = Math.min(window.devicePixelRatio || 1, 2);
+      view.cx -= (x - mouse.lastX) * dpr / view.zoom; view.cy += (y - mouse.lastY) * dpr / view.zoom;
+      view.fitted = false; clampView(); mouse.moved = true;
+    }
+    mouse.x = x; mouse.y = y; mouse.lastX = x; mouse.lastY = y; mouse.inside = true;
+  });
+  vp.addEventListener('mouseleave', () => { mouse.inside = false; mouse.down = false; });
+  vp.addEventListener('mousedown', e => { mouse.down = true; mouse.moved = false; const r = vp.getBoundingClientRect(); mouse.lastX = e.clientX - r.left; mouse.lastY = e.clientY - r.top; vp.style.cursor = 'grabbing'; });
+  window.addEventListener('mouseup', () => { mouse.down = false; vp.style.cursor = 'crosshair'; });
+  vp.addEventListener('dblclick', () => { fitView(); });
+  vp.addEventListener('wheel', e => {
+    e.preventDefault();
+    const r = vp.getBoundingClientRect(), dpr = Math.min(window.devicePixelRatio || 1, 2);
+    const px = (e.clientX - r.left) * dpr, py = (e.clientY - r.top) * dpr;
+    const before = screenToCell(px, py);
+    const f = Math.exp(-e.deltaY * 0.0015);
+    const W = glCanvas.width;
+    const minZoom = Math.min(W / setup.Nx, glCanvas.height / (setup.Nr * (S.mirror ? 2 : 1))) * 0.9;
+    view.zoom = Math.min(Math.max(view.zoom * f, minZoom), 60);
+    const after = screenToCell(px, py);
+    view.cx += before[0] - after[0]; view.cy += before[1] - after[1];
+    view.fitted = false; clampView();
+  }, { passive: false });
+  window.addEventListener('keydown', e => {
+    if (e.target.tagName === 'INPUT' && e.target.type === 'text') return;
+    if (e.target.tagName === 'SELECT') return;
+    const k = e.key.toLowerCase();
+    if (k === ' ') { e.preventDefault(); setRunning(!running); }
+    else if (k === 'r') restart();
+    else if (k === 'n') { setRunning(false); stepOnce = true; }
+    else if (k === 's') shotPending = true;
+    else if (k === 'v') toggleRecord();
+    else if (k === 'h') $('b-panel').click();
+    else if (k === 'f') fitView();
+    else if (k === 'm') { S.mirror = !S.mirror; syncControl('mirror'); onChange(rows.mirror.item); }
+    else if (k === 'p') { S.particles = !S.particles; syncControl('particles'); }
+    else if (k === 'c') { S.sonic = (S.sonic + 1) % 3; syncControl('sonic'); }
+    else if (k === 't' && e.shiftKey) runSelfTest();
+    else if (/^[1-9]$/.test(k) && FIELDS[+k - 1]) setField(FIELDS[+k - 1].id);
+  });
+  window.addEventListener('resize', () => { resizeCanvas(); });
+}
+
+const HELP_HTML = `
+<button class="btn primary" style="width:100%;margin:8px 0 4px" onclick="window.plume && window.plume.runSelfTest()">Run self-test (≈ 2 min)</button>
+<p class="note">Runs every preset, view and feature on your GPU, measures speed at each grid size and shows a pass/fail report. Your settings are restored afterwards.</p>
+<p class="note"><b>What you're looking at.</b> The app solves the compressible Euler equations (inviscid gas dynamics) on your GPU for an axisymmetric engine: the chamber, the converging–diverging nozzle and the air around it. Shock diamonds, Mach disks, expansion fans, the start-up vortex ring and the plume's response to altitude all come out of the maths. None of it is drawn by hand.</p>
+<p class="note"><b>Try this:</b> start the <i>Over-expanded</i> preset and pull <b>Altitude</b> up slowly. You'll see the shock pattern stretch and the Mach disk vanish as the jet goes from over- to under-expanded. Or turn on <b>Ascent mode</b> and record it.</p>
+<p class="note"><b>Mouse:</b> hover for local values · scroll to zoom · drag to pan · double-click to reset view.</p>
+<table class="th">
+<tr><td><span class="kbd">Space</span></td><td class="n">play / pause</td></tr>
+<tr><td><span class="kbd">R</span></td><td class="n">restart from ignition</td></tr>
+<tr><td><span class="kbd">N</span></td><td class="n">single step</td></tr>
+<tr><td><span class="kbd">1</span>–<span class="kbd">9</span></td><td class="n">switch field</td></tr>
+<tr><td><span class="kbd">C</span></td><td class="n">cycle sonic line / Mach contours</td></tr>
+<tr><td><span class="kbd">P</span></td><td class="n">tracer particles</td></tr>
+<tr><td><span class="kbd">M</span></td><td class="n">mirror view</td></tr>
+<tr><td><span class="kbd">F</span></td><td class="n">fit view</td></tr>
+<tr><td><span class="kbd">V</span> / <span class="kbd">S</span></td><td class="n">record video / screenshot</td></tr>
+<tr><td><span class="kbd">H</span></td><td class="n">hide panel</td></tr>
+<tr><td><span class="kbd">Shift</span>+<span class="kbd">T</span></td><td class="n">run self-test</td></tr>
+</table>
+<p class="note"><b>Limits (by design):</b> no viscosity or turbulence (so no boundary layers or true flow separation), no combustion or afterburning in the plume, and a single frozen γ for both exhaust and air. Walls use a cut-cell method that follows the true contour; results still sharpen with grid resolution. Treat the numbers as good engineering estimates for animation, not design data.</p>
+<p class="note"><b>Speed:</b> if it's sluggish, lower the grid resolution or the speed slider. On laptops with two GPUs, make Windows run your browser on the NVIDIA card: Settings → System → Display → Graphics → your browser → High performance.</p>
+`;
+
+
+// ---------------------------------------------------------------------------
+// Self-test: exercises every feature on this machine's GPU and reports.
+// Start with the "Run self-test" button (Help) or open the file with #selftest.
+// ---------------------------------------------------------------------------
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+let selfTestRunning = false;
+async function runSelfTest() {
+  if (selfTestRunning) return;
+  selfTestRunning = true;
+  const saved = JSON.parse(JSON.stringify(S));
+  const lines = [];
+  let pass = 0, fail = 0, warn = 0;
+  const box = document.createElement('div');
+  box.style.cssText = 'position:fixed;right:16px;top:16px;width:520px;max-height:calc(100vh - 32px);overflow:auto;z-index:50;background:rgba(8,10,16,.96);border:1px solid #3fd0ff;border-radius:8px;padding:14px 16px;font:12px/1.55 var(--mono);color:#c9d0de;white-space:pre-wrap';
+  document.body.appendChild(box);
+  const head = () => `PLUME LAB SELF-TEST   ✓ ${pass}   ✗ ${fail}   ! ${warn}\n` + '─'.repeat(56) + '\n';
+  const render = (extra = '') => { box.textContent = head() + lines.join('\n') + (extra ? '\n\n' + extra : ''); box.scrollTop = box.scrollHeight; };
+  const log = (status, msg) => { if (status === 'PASS') pass++; else if (status === 'FAIL') fail++; else if (status === 'WARN') warn++; lines.push(`${status === 'PASS' ? '✓' : status === 'FAIL' ? '✗' : status === 'WARN' ? '!' : '·'} ${msg}`); render(); };
+  const glErr = () => { const e = gl.getError(); return e === gl.NO_ERROR ? '' : 'GL error 0x' + e.toString(16); };
+  const finiteState = () => {
+    const all = solver.readAll(); let bad = 0;
+    for (let k = 0; k < all.A.length; k++) if (!isFinite(all.A[k])) bad++;
+    return bad;
+  };
+  const runFor = async (ms) => {
+    const s0 = stepsTotal, t0 = performance.now();
+    budget = S.speed;
+    setRunning(true);
+    while (performance.now() - t0 < ms) { await sleep(100); if (contextLost) break; }
+    const dt = (performance.now() - t0) / 1000;
+    return (stepsTotal - s0) / dt;
+  };
+  const canvasNotBlank = () => {
+    const v = V(); renderer.derive(v); if (v.split) renderer.derive(v, true); renderer.display(v, glCanvas.width, glCanvas.height);
+    const px = new Uint8Array(4), seen = new Set();
+    for (const [fx, fy] of [[0.1, 0.5], [0.25, 0.5], [0.4, 0.45], [0.6, 0.5], [0.8, 0.2], [0.15, 0.6]]) {
+      gl.readPixels(Math.floor(glCanvas.width * fx), Math.floor(glCanvas.height * fy), 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, px);
+      seen.add(px.join(','));
+    }
+    return seen.size;
+  };
+  try {
+    // 1. environment
+    log('INFO', `GPU: ${window.__gpu}`);
+    log(isIntegrated() ? 'WARN' : 'PASS', isIntegrated() ? `Integrated/unknown GPU (${gpuName}) — set the browser to High performance for the NVIDIA GPU` : `Discrete GPU in use: ${gpuName}`);
+    log(gl.getExtension('EXT_color_buffer_float') ? 'PASS' : 'FAIL', 'Float render targets (EXT_color_buffer_float)');
+    log('INFO', `Max texture ${gl.getParameter(gl.MAX_TEXTURE_SIZE)} · units ${gl.getParameter(gl.MAX_TEXTURE_IMAGE_UNITS)} · draw buffers ${gl.getParameter(gl.MAX_DRAW_BUFFERS)} · ${navigator.userAgent.match(/(Chrome|Edg|Firefox)\/[\d.]+/)?.[0] || ''}`);
+    log('INFO', `Boot (shader compile + setup): ${fmt(bootMs, 0)} ms`);
+    let ls = false; try { localStorage.setItem('plumelab.t', '1'); ls = localStorage.getItem('plumelab.t') === '1'; localStorage.removeItem('plumelab.t'); } catch (e) {}
+    log(ls ? 'PASS' : 'WARN', ls ? 'Settings storage works' : 'Settings storage unavailable (settings will not be remembered)');
+
+    // 2. speed at each grid resolution
+    let bestRes = 384;
+    log('INFO', `Display frame interval ≈ ${fmt(minFrameDt * 1000, 1)} ms (${fmt(1 / minFrameDt, 0)} Hz)${minFrameDt > 0.025 ? ' — browser is capping at ~30 fps (energy saver / battery?)' : ''}`);
+    setRunning(false);
+    for (const [res, label] of RES_OPTIONS) {
+      applyPreset('demo'); S.res = res; restart(); setRunning(false);
+      await sleep(200);
+      solver.step(20, P); readback();                       // warm-up
+      const t0 = performance.now();
+      for (let k = 0; k < 10; k++) { solver.step(10, P); if (k % 3 === 2) await sleep(0); }
+      solver.readStepInfo();
+      const ms = (performance.now() - t0) / 100, sps = 1000 / ms;
+      stepsTotal += 120;
+      if (contextLost) { log('FAIL', `${label.split(' —')[0]} ${res}: GPU context lost`); await sleep(6000); break; }
+      const bad = finiteState(), e = glErr();
+      const ok = !bad && !e;
+      log(ok ? 'PASS' : 'FAIL', `${label.split(' —')[0].padEnd(6)} ${String(res).padStart(4)}: ${fmt(sps, 0).padStart(6)} steps/s raw GPU · ${fmt(ms, 2)} ms/step${bad ? ' · NaN cells ' + bad : ''}${e ? ' · ' + e : ''}`);
+      if (ok && sps > 400) bestRes = res;
+      if (ms > 40) { log('INFO', 'Stopping resolution sweep (too slow for higher grids)'); break; }
+      await sleep(300);
+    }
+    log('INFO', `Recommended grid for smooth real-time use: ${bestRes}`);
+
+    // 3. every preset
+    const testRes = Math.min(bestRes, 1024);
+    const runUntil = async (simMs, maxMs) => {
+      const t0 = performance.now();
+      while (performance.now() - t0 < maxMs && !contextLost) { await runFor(500); readback(); if (simTime * 1e3 >= simMs) break; }
+    };
+    for (const key of Object.keys(ENGINE_PRESETS)) {
+      applyPreset(key); S.res = testRes; restart(); S.speed = 40;
+      await runUntil(0.6, 25000);
+      if (contextLost) { log('FAIL', `Preset ${key}: GPU context lost`); await sleep(6000); continue; }
+      readback();
+      const bad = finiteState(), e = glErr();
+      const t = theoryNow();
+      const pcErr = chamber ? Math.abs(chamber.p - live.Pc) / live.Pc : 1;
+      const ok = !bad && !e && perf && isFinite(perf.F) && pcErr < 0.25;
+      log(ok ? 'PASS' : 'FAIL', `Preset ${key.padEnd(9)} T+${fmt(simTime * 1e3, 2)}ms  F ${fmtForce(perf ? perf.F : 0).join(' ')} (ideal ${fmtForce(t.F).join(' ')})  Pc ${fmt(chamber ? chamber.p / 1e5 : 0, 0)}/${fmt(live.Pc / 1e5, 0)} bar${bad ? '  NaN ' + bad : ''}${e ? '  ' + e : ''}`);
+    }
+
+    // 4. every view + overlays
+    applyPreset('diamonds'); S.res = testRes; restart(); S.speed = 40;
+    await runUntil(0.4, 15000);
+    for (const f of FIELDS) {
+      setField(f.id);
+      const n = canvasNotBlank(), e = glErr();
+      log(n > 1 && !e ? 'PASS' : 'FAIL', `View ${f.label}: ${n} distinct sample colours${e ? ' · ' + e : ''}`);
+    }
+    setField('temp');
+    for (const [name, patch] of [['Split view', { split: true, field2: 'schl' }], ['Sonic line', { sonic: 1 }], ['Mach contours', { sonic: 2 }], ['Glow off', { glow: false }], ['Particles', { particles: true }], ['Centreline plot', { centerPlot: true }], ['Colour map turbo', { cmap: 'turbo' }], ['Mirror off', { mirror: false, split: false }]]) {
+      Object.assign(S, patch); if (patch.cmap) renderer.setColormap(S.cmap); fitView();
+      await runFor(600);
+      const n = canvasNotBlank(), e = glErr();
+      log(n > 1 && !e && !contextLost ? 'PASS' : 'FAIL', `${name}${e ? ' · ' + e : ''}`);
+    }
+    Object.assign(S, { split: false, sonic: 0, glow: true, particles: false, centerPlot: false, cmap: 'plasma', mirror: true }); renderer.setColormap('plasma'); fitView();
+
+    // 5. live changes while running
+    for (const [name, patch, kind] of [['Exit diameter 125→160 mm', { De: 160 }, 'geo'], ['Throat diameter 30→36 mm', { Dt: 36 }, 'geo'], ['Conical nozzle', { type: 'cone' }, 'geo'], ['Rocket body on', { base: true }, 'geo'], ['Chamber pressure 90→150 bar', { Pc: 150 }, 'live'], ['Altitude 0→20 km', { alt: 20 }, 'live'], ['Flight Mach 0→2', { mach: 2 }, 'live'], ['Throttle 60 %', { throttle: 60 }, 'live']]) {
+      Object.assign(S, patch); if (kind === 'geo') remesh();
+      await runFor(1500);
+      const bad = finiteState(), e = glErr();
+      log(!bad && !e && !contextLost ? 'PASS' : 'FAIL', `Live change: ${name}${bad ? ' · NaN ' + bad : ''}${e ? ' · ' + e : ''}`);
+    }
+    // ascent mode
+    applyPreset('demo'); S.res = testRes; restart(); S.speed = 40;
+    Object.assign(S, { ascent: true, ascentDur: 5, ascentTop: 25 }); ascentT = 0;
+    await runFor(6000);
+    log(S.alt > 20 && !finiteState() ? 'PASS' : 'FAIL', `Ascent mode reached ${fmt(S.alt, 1)} km`);
+    S.ascent = false;
+
+    // 6. screenshot + recording (no files are saved)
+    for (const size of ['window', '1080p', 'portrait']) {
+      S.recSize = size;
+      const blob = await new Promise(res => { const cv = composite(); cv.toBlob(res, 'image/png'); });
+      log(blob && blob.size > 10000 ? 'PASS' : 'FAIL', `Screenshot ${size}: ${blob ? fmt(blob.size / 1024, 0) : 0} KB`);
+    }
+    if (window.MediaRecorder) {
+      const types = ['video/mp4;codecs=avc1.640033', 'video/mp4;codecs=avc1.4d0033', 'video/mp4;codecs=avc1', 'video/mp4', 'video/webm;codecs=vp9', 'video/webm'];
+      const mime = types.find(t => MediaRecorder.isTypeSupported(t)) || '';
+      S.recSize = '1080p'; composite();
+      const rec = new MediaRecorder(recCanvas.captureStream(30), { mimeType: mime, videoBitsPerSecond: 12e6 });
+      const chunks = []; rec.ondataavailable = e => chunks.push(e.data);
+      const stopped = new Promise(r => rec.onstop = r);
+      rec.start(250);
+      const t0 = performance.now();
+      while (performance.now() - t0 < 2500) { composite(); await sleep(33); }
+      rec.stop(); await stopped;
+      const size = chunks.reduce((a, b) => a + b.size, 0);
+      log(size > 20000 ? 'PASS' : 'FAIL', `Video recording (${mime || 'default'}): ${fmt(size / 1024, 0)} KB in 2.5 s`);
+    } else log('FAIL', 'Video recording: MediaRecorder not supported');
+    S.recSize = saved.recSize;
+
+    // 7. GPU reset recovery
+    const ext = gl.getExtension('WEBGL_lose_context');
+    if (ext) {
+      const resBefore = S.res;
+      ext.loseContext(); await sleep(400); ext.restoreContext();
+      let waited = 0; while (contextLost && waited < 10000) { await sleep(250); waited += 250; }
+      await runFor(1500);
+      const ok = !contextLost && !finiteState();
+      log(ok ? 'PASS' : 'FAIL', `Recovery from a forced GPU reset (grid ${resBefore} → ${S.res})`);
+      showMsg('');
+    }
+    log('INFO', `Real GPU resets during the test: ${lossCount - 1 > 0 ? lossCount - 1 : 0}`);
+  } catch (e) {
+    log('FAIL', 'Self-test crashed: ' + (e && e.message ? e.message : e));
+    console.error(e);
+  }
+  // restore the user's settings
+  Object.assign(S, saved); S.ascent = false; S.throttleSweep = false;
+  for (const k in rows) syncControl(k);
+  renderer.setColormap(S.cmap); refreshVisibility(); restart(); setField(S.field); saveSettings();
+  const report = head() + lines.join('\n');
+  render(fail === 0 ? 'All tests passed. Your settings have been restored.' : 'Some tests failed — use "Copy report" to save the results.');
+  const bar = document.createElement('div'); bar.style.cssText = 'display:flex;gap:8px;margin-top:10px';
+  const copy = document.createElement('button'); copy.className = 'btn primary'; copy.textContent = 'Copy report';
+  copy.onclick = async () => { try { await navigator.clipboard.writeText(report); copy.textContent = 'Copied ✓'; } catch (e) { const ta = document.createElement('textarea'); ta.value = report; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); ta.remove(); copy.textContent = 'Copied ✓'; } };
+  const close = document.createElement('button'); close.className = 'btn'; close.textContent = 'Close';
+  close.onclick = () => box.remove();
+  bar.append(copy, close); box.appendChild(bar);
+  window.__selfTestReport = report;
+  selfTestRunning = false;
+}
+
+// ---------------------------------------------------------------------------
+// Settings persistence (browser storage; per-browser, best effort)
+// ---------------------------------------------------------------------------
+const STORE_KEY = 'plumelab.settings.v1';
+const TRANSIENT = new Set(['ascent', 'throttleSweep']);
+let saveTimer = null;
+function saveSettings() {
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(() => {
+    try {
+      const o = {};
+      for (const k in S) if (!TRANSIENT.has(k)) o[k] = S[k];
+      localStorage.setItem(STORE_KEY, JSON.stringify(o));
+    } catch (e) { /* storage unavailable: ignore */ }
+  }, 400);
+}
+function loadSettings() {
+  try {
+    const raw = localStorage.getItem(STORE_KEY);
+    if (!raw) return false;
+    const o = JSON.parse(raw);
+    for (const k in o) if (k in S && !TRANSIENT.has(k) && typeof o[k] === typeof S[k]) S[k] = o[k];
+    if (S.throttle !== 100 && !o.throttle) S.throttle = 100;
+    return true;
+  } catch (e) { return false; }
+}
+function showTip() {
+  const t = document.createElement('div');
+  t.style.cssText = 'position:absolute;left:50%;bottom:16px;transform:translateX(-50%);background:rgba(8,10,16,.85);border:1px solid #262c3f;border-radius:6px;padding:7px 12px;font:11px var(--mono);color:#9aa3b5;letter-spacing:.04em;pointer-events:none;transition:opacity 1s;z-index:4;white-space:nowrap';
+  t.textContent = 'hover = probe values  ·  scroll = zoom  ·  drag = pan  ·  double-click = reset view  ·  1–9 = fields  ·  H = hide panel';
+  $('viewport').appendChild(t);
+  setTimeout(() => { t.style.opacity = '0'; }, 9000);
+  setTimeout(() => t.remove(), 10500);
+}
+
+// ---------------------------------------------------------------------------
+// Boot
+// ---------------------------------------------------------------------------
+let bootMs = 0;
+function boot() {
+  const tBoot = performance.now();
+  buildTabs(); buildPanel(); bindEvents();
+  if (!initGL()) return;
+  resizeCanvas();
+  if (loadSettings()) {
+    for (const k in rows) syncControl(k);
+    refreshVisibility();
+    renderer.setColormap(S.cmap);
+    $('speed').value = S.speed; $('speedval').textContent = `${S.speed} st/fr`;
+    restart();
+  } else applyPreset('demo');
+  setField(S.field);
+  for (const k in rows) syncControl(k);
+  showTip();
+  bootMs = performance.now() - tBoot;
+  requestAnimationFrame(t => { lastFrameT = t; frame(t); });
+  if (/selftest/i.test(location.hash)) setTimeout(runSelfTest, 1500);
+  // expose a small API for testing / tinkering from the console
+  window.plume = { S, get setup() { return setup; }, get solver() { return solver; }, get renderer() { return renderer; }, restart,
+    get gpu() { return window.__gpu; }, get lossCount() { return lossCount; }, get stepsPerSec() { return stepsPerSec; }, get fps() { return fps; }, get budget() { return budget; }, applyPreset, setField, get perf() { return perf; }, get simTime() { return simTime; },
+    stepNow: (n) => { solver.step(n, P); stepsTotal += n; readback(); updateHUD(); }, composite, setRunning,
+    runSelfTest, get selfTestReport() { return window.__selfTestReport; },
+    loseContext: () => { const e = gl.getExtension('WEBGL_lose_context'); e.loseContext(); setTimeout(() => e.restoreContext(), 500); } };
+}
+window.addEventListener('DOMContentLoaded', boot);
+})();
+
+</script>
+</body>
+</html>

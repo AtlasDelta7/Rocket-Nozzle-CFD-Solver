@@ -1,0 +1,153 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Plume Lab — Rocket Nozzle Flow Simulator</title>
+<style>
+:root {
+  --bg: #06070b; --bg2: #0b0d13; --panel: #0d1017; --line: #1b2030; --line2: #262c3f;
+  --text: #c9d0de; --dim: #6d7689; --dimmer: #464e60; --accent: #3fd0ff; --accent2: #5cf2a8;
+  --warn: #ffb547; --bad: #ff6b6b;
+  --mono: "JetBrains Mono", "Cascadia Mono", "Cascadia Code", Consolas, "SF Mono", Menlo, monospace;
+  --sans: "Segoe UI", system-ui, -apple-system, "Helvetica Neue", Arial, sans-serif;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text); font-family: var(--sans); font-size: 13px; overflow: hidden; }
+button, select, input { font-family: inherit; font-size: inherit; color: inherit; }
+#app { display: flex; height: 100vh; width: 100vw; }
+#stage { flex: 1; display: flex; flex-direction: column; min-width: 0; position: relative; }
+#topbar { display: flex; align-items: center; gap: 4px; padding: 8px 12px; border-bottom: 1px solid var(--line); background: var(--bg2); flex-wrap: wrap; }
+#brand { font-family: var(--mono); font-size: 12px; letter-spacing: .22em; color: var(--text); margin-right: 14px; white-space: nowrap; }
+#brand b { color: var(--accent); font-weight: 600; }
+.tab { background: transparent; border: 1px solid transparent; color: var(--dim); padding: 5px 9px; border-radius: 4px; cursor: pointer; font-family: var(--mono); font-size: 11px; letter-spacing: .06em; text-transform: uppercase; }
+.tab:hover { color: var(--text); border-color: var(--line2); }
+.tab.on { color: var(--bg); background: var(--accent); }
+#viewport { flex: 1; position: relative; min-height: 0; background: #000; cursor: crosshair; }
+#viewport canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+#hud-top { position: absolute; left: 0; right: 0; top: 0; display: flex; justify-content: space-between; padding: 10px 14px; pointer-events: none;
+  font-family: var(--mono); font-size: 11px; letter-spacing: .16em; color: rgba(200,210,230,.55); text-transform: uppercase; }
+#hud-top .big { color: rgba(220,230,245,.85); }
+#probe { position: absolute; pointer-events: none; display: none; background: rgba(8,10,16,.88); border: 1px solid var(--line2); border-radius: 4px; padding: 6px 8px;
+  font-family: var(--mono); font-size: 11px; line-height: 1.5; color: var(--text); white-space: pre; z-index: 5; }
+#msg { position: absolute; left: 50%; top: 40%; transform: translate(-50%, -50%); max-width: 520px; text-align: center; background: rgba(10,12,18,.95);
+  border: 1px solid var(--line2); border-radius: 8px; padding: 20px 24px; display: none; line-height: 1.6; z-index: 10; }
+#hud { display: grid; grid-template-columns: repeat(6, 1fr); border-top: 1px solid var(--line); background: var(--bg2); }
+.metric { padding: 10px 14px 9px; border-right: 1px solid var(--line); min-width: 0; }
+.metric:last-child { border-right: 0; }
+.metric .k { font-family: var(--mono); font-size: 10px; letter-spacing: .18em; color: var(--dim); text-transform: uppercase; white-space: nowrap; }
+.metric .v { font-family: var(--mono); font-size: 22px; color: #e6ebf5; margin-top: 2px; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.metric .v small { font-size: 11px; color: var(--dim); margin-left: 3px; letter-spacing: .05em; }
+.metric .s { font-family: var(--mono); font-size: 10px; color: var(--dimmer); margin-top: 1px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#transport { display: flex; align-items: center; gap: 6px; padding: 7px 12px; border-top: 1px solid var(--line); background: var(--bg); flex-wrap: wrap; }
+.btn { background: var(--panel); border: 1px solid var(--line2); color: var(--text); padding: 6px 11px; border-radius: 5px; cursor: pointer; white-space: nowrap; }
+.btn:hover { border-color: var(--accent); }
+.btn.primary { background: var(--accent); color: #02121a; border-color: var(--accent); font-weight: 600; }
+.btn.rec { border-color: #5a2a2a; }
+.btn.rec.on { background: #c0392b; border-color: #e74c3c; color: #fff; }
+.btn.on { border-color: var(--accent); color: var(--accent); }
+#transport .sep { width: 1px; height: 20px; background: var(--line2); margin: 0 4px; }
+#transport .lbl { color: var(--dim); font-size: 12px; }
+#footer { font-family: var(--mono); font-size: 10px; color: var(--dimmer); letter-spacing: .12em; text-transform: uppercase; margin-left: auto; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+#panel { width: 360px; flex: 0 0 360px; background: var(--panel); border-left: 1px solid var(--line); display: flex; flex-direction: column; min-height: 0; }
+#panel.hidden { display: none; }
+#panel-head { padding: 10px 14px; border-bottom: 1px solid var(--line); display: flex; gap: 8px; align-items: center; }
+#panel-head select { flex: 1; }
+#panel-body { overflow-y: auto; flex: 1; padding: 0 0 30px; }
+#panel-body::-webkit-scrollbar { width: 8px; }
+#panel-body::-webkit-scrollbar-thumb { background: var(--line2); border-radius: 4px; }
+details.sec { border-bottom: 1px solid var(--line); }
+details.sec > summary { list-style: none; cursor: pointer; padding: 11px 14px; font-family: var(--mono); font-size: 11px; letter-spacing: .18em; text-transform: uppercase; color: var(--dim); display: flex; justify-content: space-between; }
+details.sec > summary::after { content: '+'; color: var(--dimmer); }
+details.sec[open] > summary::after { content: '–'; }
+details.sec > summary:hover { color: var(--text); }
+.sec-body { padding: 2px 14px 12px; }
+.row { margin: 9px 0 11px; }
+.row .top { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; margin-bottom: 5px; }
+.row .name { color: var(--text); font-size: 12.5px; }
+.row .name .live { color: var(--accent2); font-size: 9px; font-family: var(--mono); letter-spacing: .1em; margin-left: 5px; vertical-align: 1px; }
+.row .val { font-family: var(--mono); font-size: 12px; color: var(--accent); white-space: nowrap; }
+.row .val input { width: 70px; background: transparent; border: 1px solid transparent; color: var(--accent); text-align: right; font-family: var(--mono); font-size: 12px; padding: 1px 3px; border-radius: 3px; }
+.row .val input:hover, .row .val input:focus { border-color: var(--line2); outline: none; background: var(--bg); }
+.row .val .u { color: var(--dim); margin-left: 3px; }
+.row .hint { color: var(--dimmer); font-size: 11px; margin-top: 3px; }
+select { background: var(--bg); border: 1px solid var(--line2); border-radius: 5px; padding: 6px 8px; color: var(--text); width: 100%; }
+input[type=range] { -webkit-appearance: none; appearance: none; width: 100%; height: 18px; background: transparent; margin: 0; }
+input[type=range]::-webkit-slider-runnable-track { height: 3px; background: var(--line2); border-radius: 2px; }
+input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 13px; height: 13px; border-radius: 50%; background: var(--accent); margin-top: -5px; border: 2px solid #02121a; }
+input[type=range]::-moz-range-track { height: 3px; background: var(--line2); }
+input[type=range]::-moz-range-thumb { width: 11px; height: 11px; border-radius: 50%; background: var(--accent); border: 2px solid #02121a; }
+.toggle { display: flex; align-items: center; justify-content: space-between; margin: 10px 0; cursor: pointer; }
+.toggle input { accent-color: var(--accent); width: 16px; height: 16px; }
+.seg { display: flex; gap: 4px; flex-wrap: wrap; }
+.seg button { flex: 1; background: var(--bg); border: 1px solid var(--line2); border-radius: 4px; padding: 5px 4px; cursor: pointer; color: var(--dim); font-size: 12px; }
+.seg button.on { border-color: var(--accent); color: var(--accent); }
+table.th { width: 100%; border-collapse: collapse; font-family: var(--mono); font-size: 11.5px; }
+table.th td { padding: 4px 0; border-bottom: 1px solid var(--line); }
+table.th td:first-child { color: var(--dim); }
+table.th td.n { text-align: right; color: var(--text); white-space: nowrap; }
+table.th tr.head td { color: var(--dimmer); font-size: 10px; letter-spacing: .14em; text-transform: uppercase; }
+.state { display: inline-block; padding: 2px 7px; border-radius: 10px; font-family: var(--mono); font-size: 10.5px; letter-spacing: .06em; }
+.state.under { background: rgba(63,208,255,.13); color: var(--accent); }
+.state.over { background: rgba(255,181,71,.13); color: var(--warn); }
+.state.ideal { background: rgba(92,242,168,.13); color: var(--accent2); }
+.state.vac { background: rgba(180,140,255,.13); color: #b48cff; }
+.note { color: var(--dim); font-size: 11.5px; line-height: 1.55; margin: 8px 0; }
+.note.warn { color: var(--warn); }
+.kbd { font-family: var(--mono); font-size: 10.5px; border: 1px solid var(--line2); border-radius: 3px; padding: 0 4px; color: var(--dim); }
+#panel-toggle { position: absolute; right: 10px; top: 52px; z-index: 6; }
+@media (max-width: 900px) {
+  #app { flex-direction: column; }
+  #panel { width: 100%; flex: 1 1 45%; border-left: 0; border-top: 1px solid var(--line); }
+  #hud { grid-template-columns: repeat(3, 1fr); }
+  .metric .v { font-size: 17px; }
+}
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="stage">
+    <div id="topbar">
+      <div id="brand">PLUME<b>LAB</b></div>
+      <div id="tabs"></div>
+    </div>
+    <div id="viewport">
+      <canvas id="gl"></canvas>
+      <canvas id="overlay"></canvas>
+      <div id="hud-top"><div><span id="fieldname" class="big">Temperature field</span><br><span id="simtime">T+ 0.000 ms</span></div>
+        <div style="text-align:right"><span id="solvestat">—</span><br><span id="gridstat">—</span></div></div>
+      <div id="probe"></div>
+      <div id="msg"></div>
+    </div>
+    <div id="hud">
+      <div class="metric"><div class="k">Thrust</div><div class="v" id="m-thrust">—</div><div class="s" id="s-thrust">ideal —</div></div>
+      <div class="metric"><div class="k">Exit Mach</div><div class="v" id="m-mach">—</div><div class="s" id="s-mach">ideal —</div></div>
+      <div class="metric"><div class="k">Chamber</div><div class="v" id="m-tc">—</div><div class="s" id="s-tc">target —</div></div>
+      <div class="metric"><div class="k">Pc</div><div class="v" id="m-pc">—</div><div class="s" id="s-pc">target —</div></div>
+      <div class="metric"><div class="k">Isp</div><div class="v" id="m-isp">—</div><div class="s" id="s-isp">ideal —</div></div>
+      <div class="metric"><div class="k">Pe / Pa</div><div class="v" id="m-ratio">—</div><div class="s" id="s-ratio">—</div></div>
+    </div>
+    <div id="transport">
+      <button class="btn primary" id="b-play" title="Space">❚❚ Pause</button>
+      <button class="btn" id="b-restart" title="R">↺ Restart</button>
+      <button class="btn" id="b-step" title="N">Step</button>
+      <div class="sep"></div>
+      <span class="lbl">Speed</span>
+      <input type="range" id="speed" min="1" max="100" step="1" value="20" style="width:110px">
+      <span class="lbl" id="speedval" style="font-family:var(--mono);width:68px">20 st/fr</span>
+      <div class="sep"></div>
+      <button class="btn rec" id="b-rec" title="V">● Record</button>
+      <button class="btn" id="b-shot" title="S">Screenshot</button>
+      <button class="btn" id="b-panel" title="H">Panel</button>
+      <div id="footer">2D axisymmetric · inviscid Euler · frozen-γ · HLLC / MUSCL · GPU</div>
+    </div>
+  </div>
+  <div id="panel">
+    <div id="panel-head"><select id="preset"></select></div>
+    <div id="panel-body"></div>
+  </div>
+</div>
+<!--SCRIPTS-->
+</body>
+</html>
