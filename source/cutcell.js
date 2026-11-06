@@ -12,7 +12,7 @@
 'use strict';
 
 function buildCutGeometry(o) {
-  // o: { Nx, Nr, dx, contour, tw, base, xBase, bodyR, mode: 'cut' | 'stair' }
+  // o: { Nx, Nr, dx, contour, tw, base, xBase, bodyR, mode: 'cut' | 'stair', solids: [{x0,x1,r0,r1}] in metres }
   const { Nx, Nr, dx, contour } = o;
   const cut = o.mode !== 'stair';
   const xeC = contour.xe / dx, twC = o.tw / dx, xBaseC = o.xBase / dx, bodyC = o.bodyR / dx;
@@ -32,7 +32,9 @@ function buildCutGeometry(o) {
     if (a < -1e8 || b < -1e8) return contour.radiusAt(Math.min(xc * dx, contour.xe)) / dx;
     return a + (b - a) * t;
   };
+  const solids = (o.solids || []).map(s => ({ x0: s.x0 / dx, x1: s.x1 / dx, r0: s.r0 / dx, r1: s.r1 / dx }));
   const fluid = (xc, rc) => {
+    for (const s of solids) if (xc >= s.x0 && xc <= s.x1 && rc >= s.r0 && rc <= s.r1) return false;
     if (xc <= xeC) {
       const ri = RinAt(xc);
       if (rc >= ri && rc <= ri + twC) return false;
@@ -51,6 +53,7 @@ function buildCutGeometry(o) {
   const maybeCut = (i, j) => {
     if (!cut) return false;
     const x0 = i, x1 = i + 1, r0 = j, r1 = j + 1;
+    for (const s of solids) if (overlaps(x0, x1, s.x0 - 1e-6, s.x1 + 1e-6) && overlaps(r0, r1, s.r0 - 1e-6, s.r1 + 1e-6)) return true;
     if (colMax[i] < -1e8) return false;          // column entirely downstream of the nozzle
     const mn = colMin[i], mx = colMax[i];
     if (overlaps(r0, r1, mn - 1e-6, mx + 1e-6)) return true;

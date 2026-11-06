@@ -15,6 +15,8 @@ const S = {
   base: false, bodyRatio: 1.5,
   Pc: 196, throttle: 100, Tc: 3670, Mw: 22, gamma: 1.22, qAb: 6.8, sAir: 1.8,
   viscous: true, afterburn: true, Tw: 800, inletAbsorb: 100, minCells: 8,
+  injMode: false, injType: 'shower', injRings: 6, injDP: 20, injD: 1.5, injTMR: 1, injAngle: 30, OF: 2.3, droplets: true,
+  film: 0, baffles: 0, baffleH: 30, cavD: 0, cavW: 40,
   alt: 0, mach: 0,
   ascent: false, ascentTop: 35, ascentDur: 40, ascentMachTop: 3.0, ascentMach: true, throttleSweep: false,
   res: 1024, domainL: 1.2, aspect: 0.28, startMode: 'ramp', rampMs: 0.12, cfl: 0.6, order2: true, wallModel: 'cut',
@@ -38,7 +40,7 @@ const CONTROLS = [
     { key: 'bellPct', label: 'Bell length', min: 60, max: 100, step: 1, unit: '% of 15° cone', kind: 'geo', d: 0, show: () => S.type === 'bell' },
     { key: 'coneAngle', label: 'Cone half-angle', min: 6, max: 35, step: 0.5, unit: '°', kind: 'geo', d: 1, show: () => S.type === 'cone' },
     { key: 'CR', label: 'Contraction ratio', min: 1.8, max: 12, step: 0.1, unit: 'Ac/At', kind: 'geo', d: 1 },
-    { key: 'chamberLen', label: 'Chamber length', min: 0.6, max: 4, step: 0.1, unit: '× Rc', kind: 'geo', d: 1 },
+    { key: 'chamberLen', label: 'Chamber length', min: 0.6, max: 10, step: 0.1, unit: '× Rc', kind: 'geo', d: 1 },
     { key: 'base', label: 'Rocket body around engine', type: 'toggle', kind: 'geo' },
     { key: 'bodyRatio', label: 'Body diameter', min: 1.05, max: 3, step: 0.05, unit: '× nozzle', kind: 'geo', d: 2, show: () => S.base },
   ] },
@@ -55,6 +57,22 @@ const CONTROLS = [
     { key: 'viscous', label: 'Viscosity, turbulence & boundary layers', type: 'toggle', kind: 'live2' },
     { key: 'Tw', label: 'Nozzle wall temperature', min: 300, max: 2000, step: 10, unit: 'K', kind: 'live', d: 0, show: () => S.viscous, hint: () => 'Sets the heat lost to the wall. Regeneratively cooled walls run near 800 K' },
     { key: 'afterburn', label: 'Afterburning in the plume', type: 'toggle', kind: 'live2' },
+  ] },
+  { section: 'Injector & chamber', open: true, items: [
+    { key: 'injMode', label: 'Simulate injectors, sprays and flame', type: 'toggle', kind: 'reset', hint: () => injectorHint() },
+    { key: 'injType', label: 'Injector type', type: 'select', kind: 'reset', show: () => S.injMode, options: [['shower', 'Showerhead (alternating rings)'], ['coax', 'Coaxial shear'], ['impinge', 'Impinging doublets'], ['pintle', 'Pintle']] },
+    { key: 'injRings', label: 'Rings of elements', min: 1, max: 12, step: 1, unit: '', kind: 'reset', d: 0, show: () => S.injMode && S.injType !== 'pintle' },
+    { key: 'OF', label: 'Mixture ratio O/F', min: 0.5, max: 10, step: 0.05, unit: '', kind: 'reset', d: 2, show: () => S.injMode, hint: () => { const sp = PROPELLANTS[S.prop] && PROPELLANTS[S.prop].spray; return sp ? `Design ${fmt(sp.OF, 1)} · stoichiometric ${fmt(sp.s, 1)}` : ''; } },
+    { key: 'injDP', label: 'Injector pressure drop', min: 5, max: 50, step: 1, unit: '% Pc', kind: 'reset', d: 0, show: () => S.injMode, hint: () => 'Sets the injection speed. Below about 15 % real engines risk feed-system instability' },
+    { key: 'injD', label: 'Orifice size', min: 0.4, max: 5, step: 0.1, unit: 'mm', kind: 'reset', d: 1, show: () => S.injMode, hint: () => 'Sets the starting drop size. Smaller orifices burn closer to the face' },
+    { key: 'injAngle', label: 'Impingement half-angle', min: 10, max: 45, step: 1, unit: '°', kind: 'reset', d: 0, show: () => S.injMode && S.injType === 'impinge' },
+    { key: 'injTMR', label: 'Total momentum ratio', min: 0.1, max: 4, step: 0.05, unit: '', kind: 'reset', d: 2, show: () => S.injMode && S.injType === 'pintle', hint: () => `Spray cone angle ${fmt(Math.atan(Math.sqrt(S.injTMR)) * 180 / Math.PI, 0)}° from the axis` },
+    { key: 'droplets', label: 'Show droplets (fuel amber, oxidiser blue)', type: 'toggle', kind: 'view', show: () => S.injMode },
+    { key: 'film', label: 'Film cooling', min: 0, max: 30, step: 1, unit: '% of fuel', kind: 'reset', d: 0, show: () => S.injMode },
+    { key: 'baffles', label: 'Ring baffles', min: 0, max: 4, step: 1, unit: '', kind: 'reset', d: 0, show: () => S.injMode },
+    { key: 'baffleH', label: 'Baffle height', min: 5, max: 80, step: 1, unit: '% Rc', kind: 'reset', d: 0, show: () => S.injMode && S.baffles > 0 },
+    { key: 'cavD', label: 'Acoustic cavity depth', min: 0, max: 40, step: 1, unit: '% Rc', kind: 'reset', d: 0, show: () => S.injMode },
+    { key: 'cavW', label: 'Acoustic cavity width', min: 5, max: 100, step: 1, unit: '% Rc', kind: 'reset', d: 0, show: () => S.injMode && S.cavD > 0 },
   ] },
   { section: 'Flight & environment', open: true, items: [
     { key: 'alt', label: 'Altitude', min: 0, max: 45, step: 0.1, unit: 'km', kind: 'live', d: 1, hint: () => { const a = atmosphere(S.alt * 1000); return `Ambient ${fmt(a.p / 1000, a.p < 1000 ? 3 : 1)} kPa · ${fmt(a.T, 0)} K`; } },
@@ -187,7 +205,16 @@ function cfgFromS() {
     alt: S.alt * 1000, mach: S.mach, base: S.base, bodyRatio: S.bodyRatio, domainL: S.domainL, Nx: S.res,
     aspect: S.aspect, startMode: S.startMode, rampMs: S.rampMs, cfl: S.cfl, order2: S.order2, wallModel: S.wallModel,
     minCells: S.minCells, viscous: S.viscous, afterburn: S.afterburn, qAb: S.qAb, sAir: S.sAir, Tw: S.Tw, inletAbsorb: S.inletAbsorb / 100,
+    prop: S.prop, injMode: S.injMode, injType: S.injType, injRings: S.injRings, injDP: S.injDP, injD: S.injD, injTMR: S.injTMR, injAngle: S.injAngle, OF: S.OF,
+    film: S.film, baffles: S.baffles, baffleH: S.baffleH, cavD: S.cavD, cavW: S.cavW,
   };
+}
+function injectorHint() {
+  if (S.injMode && !(PROPELLANTS[S.prop] && PROPELLANTS[S.prop].spray)) return 'Choose kerolox, methalox or hydrolox: this mode needs liquid-oxygen propellants';
+  if (!S.injMode) return 'Replaces the hot-gas source with liquid sprays, mixing and a flame. The grid closes in around the engine';
+  const c = setup && setup.contour; if (!c) return '';
+  const Vc = Math.PI * c.Rc * c.Rc * c.Lc, At = Math.PI * c.Rt * c.Rt;
+  return `L* ≈ ${fmt((Vc + 0.5 * Math.PI * (c.Rc * c.Rc + c.Rt * c.Rt) * (c.xt - c.Lc)) / At, 2)} m`;
 }
 function liveTargets() {
   return { Pc: S.Pc * 1e5 * S.throttle / 100, Tc: S.Tc, Mw: S.Mw, alt: S.alt * 1000, mach: S.mach };
@@ -209,6 +236,9 @@ function restart() {
     if (gridChanged) { solver.resize(setup.Nx, setup.Nr); renderer.resize(setup.Nx, setup.Nr); }
   } catch (e) { showMsg('<b>Grid too large for this GPU.</b><br>' + e.message); return; }
   solver.setGeometry(setup.geo);
+  if (!solver.spray) { solver.spray = new GPUSpray(solver); solver.spray.resize(); }
+  if (setup.injector && !solver.spray.blendOk) showMsg('<b>This GPU cannot blend floating-point textures,</b> which the spray model needs. Switch off injector mode.');
+  solver.spray.setInjector(setup.injector);
   const init = setup.initialState();
   solver.setState(init.A, init.B);
   renderer.resetParticles();
@@ -216,6 +246,7 @@ function restart() {
   live = liveTargets();
   P = setup.P;
   stepsTotal = 0; simTime = 0; perf = null; chamber = null; lastReadT = -1; axisData = null; sep = null; sepHold = 0; readGen++; probeData = null; budget = Math.max(2, Math.min(budget, 6));
+  chamberPerf = null; wallGasT = 0;
   if (gridChanged || !view.fitted) fitView();
   refreshHints();
 }
@@ -230,6 +261,7 @@ function remesh() {
     if (ns.Nx !== setup.Nx || ns.Nr !== setup.Nr) { restart(); return; }
     setup = ns;
     solver.setGeometry(setup.geo);
+    if (solver.spray) solver.spray.setInjector(setup.injector);
     refreshHints();
     // a smaller throat can drop below the minimum: re-grid once dragging has stopped
     clearTimeout(resetTimer);
@@ -335,6 +367,8 @@ function displayRange(field = S.field) {
     case 'exh': return { r: [0, 1], unit: '', d: 2 };
     case 'turb': return { r: [0, 4], unit: '', d: 0 };
     case 'burn': return { r: [0, 1], unit: '', d: 2 };
+    case 'fuel': case 'ox': return { r: [0, 0.6], unit: '', d: 2 };
+    case 'heat': return { r: [0.5, 4.5], unit: '', d: 0 };
     default: return { r: [0, 1], unit: '', d: 1 };
   }
 }
@@ -342,7 +376,8 @@ function V() {
   const dr = displayRange();
   const split = S.split && S.mirror;
   return {
-    fieldIndex: fieldIndex(), range: dr.r, ReN: P.ReN, RaN: P.RaN,
+    fieldIndex: fieldIndex(), range: dr.r, ReN: P.ReN, RaN: P.RaN, Rs: P.Rs, chemK: P.chemK,
+    droplets: !!(P.inj && S.droplets), dropScale: 25000, dpr: window.devicePixelRatio || 1,
     split, fieldIndex2: FIELDS.findIndex(f => f.id === S.field2), range2: displayRange(S.field2).r,
     Tc: live.Tc, Ta: P.Ta, schlGain: S.schlGain, dx: setup.dx,
     view: viewVec(), mirror: S.mirror, sonic: +S.sonic, bg: (S.field === 'flame' || (S.split && S.field2 === 'flame')) ? [0.012, 0.016, 0.035] : [0.02, 0.025, 0.05],
@@ -384,6 +419,8 @@ function drawColorbar(field, bx, by, bw, dpr, tag) {
   else if (field === 'vort') { lo = '0'; hi = 'strong shear'; }
   else if (field === 'turb') { lo = 'laminar'; hi = '10,000 × laminar'; }
   else if (field === 'burn') { lo = 'unburnt'; hi = 'fully burnt'; }
+  else if (field === 'fuel' || field === 'ox') { lo = '0'; hi = '≥ 60 % by mass'; }
+  else if (field === 'heat') { lo = 'none'; hi = 'intense'; }
   else { lo = lab(dr.r[0]); hi = lab(dr.r[1]) + (dr.unit && !dr.log ? ' ' + dr.unit : dr.log && field === 'dens' ? ' kg/m³' : ''); }
   ov.textAlign = 'left'; ov.fillText(name, bx, by - 6 * dpr);
   ov.textBaseline = 'top';
@@ -419,6 +456,14 @@ function drawOverlay() {
       for (let k = c.pts.length - 1; k >= 0; k--) { const [x, r] = c.pts[k]; if (x > xb) continue; p = cellToScreen(x / dx, s * (r + tw * 0.5) / dx, v); ov.lineTo(p[0], p[1]); }
       p = cellToScreen(0, s * (c.Rc + tw * 0.5) / dx, v); ov.lineTo(p[0], p[1]);
       ov.closePath(); ov.fillStyle = '#0b0d13'; ov.fill(); ov.strokeStyle = 'rgba(170,185,210,0.55)'; ov.stroke();
+    }
+  }
+  // pintle post and baffles
+  if (setup.solids && setup.solids.length) {
+    ov.strokeStyle = 'rgba(210,220,235,0.9)'; ov.lineWidth = 1 * dpr; ov.fillStyle = 'rgba(40,46,60,0.9)';
+    for (const q of setup.solids) for (const s of signs) {
+      const a = cellToScreen(Math.max(q.x0, 0) / dx, s * Math.max(q.r0, 0) / dx, v), b = cellToScreen(q.x1 / dx, s * q.r1 / dx, v);
+      ov.fillRect(a[0], a[1], b[0] - a[0], b[1] - a[1]); ov.strokeRect(a[0], a[1], b[0] - a[0], b[1] - a[1]);
     }
   }
   // separation point on the nozzle wall
@@ -507,6 +552,18 @@ function processAxis(row, rowB) {
 function readAxis() { processAxis(solver._readRect(solver.state.A, 0, 0, setup.Nx, 1), solver._readRect(solver.state.B, 0, 0, setup.Nx, 1)); }
 // Separation read-out: a short hold stops the marker flickering as the shock foot moves.
 let sep = null, sepHold = 0;
+let chamberPerf = null, wallGasT = 0;
+function processThroat(col) {
+  const now = chamberPerformance(setup, col);
+  chamberPerf = chamberPerf ? { mdot: chamberPerf.mdot + 0.1 * (now.mdot - chamberPerf.mdot), unburntOx: chamberPerf.unburntOx + 0.1 * (now.unburntOx - chamberPerf.unburntOx), fuelVapour: chamberPerf.fuelVapour + 0.1 * (now.fuelVapour - chamberPerf.fuelVapour) } : now;
+}
+// mean gas temperature next to the chamber wall, from the near-wall sound speed
+function processChamberWall(row) {
+  let s = 0, n = 0;
+  const g = S.gamma, end = Math.floor(setup.contour.Lc / setup.dx);
+  for (let i = 2; i < end; i++) { const c = row[i * 4 + 3]; if (c > 0) { s += c * c / (g * P.ReN) * T_REF; n++; } }
+  if (n) wallGasT = wallGasT ? wallGasT + 0.1 * (s / n - wallGasT) : s / n;
+}
 function processWall(row) {
   const now = wallSeparation(setup, row, atmosphere(live.alt).p);
   if (now) { sep = sep ? { ...now, x: sep.x + (now.x - sep.x) * 0.2, frac: sep.frac + (now.frac - sep.frac) * 0.2 } : now; sepHold = 12; }
@@ -524,6 +581,8 @@ function asyncReadback() {
     processMeasurements(tPrev, { A: d.colA, B: d.colB }, d.chA, d.chB);
     if (d.axis) processAxis(d.axis, d.axisB);
     if (d.wall && S.viscous) processWall(d.wall); else if (!S.viscous) sep = null;
+    if (d.wall && P.inj) processChamberWall(d.wall);
+    if (d.thA && P.inj) processThroat({ A: d.thA, B: d.thB });
     if (d.prA) probeData = { cell: res.probe, q: cellPrimSI(setup, d.prA, d.prB) };
   }
   if (!solver._async) {
@@ -535,6 +594,7 @@ function asyncReadback() {
       { name: 'chB', tex: st.B, x: setup.iChamber, y: 0, w: 1, h: 1 },
       { name: 'wall', tex: solver.drawWallRow(), x: 0, y: 0, w: setup.Nx, h: 1 },
     ];
+    if (P.inj) reqs.push({ name: 'thA', tex: st.A, x: setup.iThroat, y: 0, w: 1, h: setup.Nr }, { name: 'thB', tex: st.B, x: setup.iThroat, y: 0, w: 1, h: setup.Nr });
     if (S.centerPlot) reqs.push({ name: 'axis', tex: st.A, x: 0, y: 0, w: setup.Nx, h: 1 }, { name: 'axisB', tex: st.B, x: 0, y: 0, w: setup.Nx, h: 1 });
     const pc = probeCell;
     if (pc) { reqs.push({ name: 'prA', tex: st.A, x: pc.i, y: pc.j, w: 1, h: 1 }, { name: 'prB', tex: st.B, x: pc.i, y: pc.j, w: 1, h: 1 }); }
@@ -595,7 +655,7 @@ function updateHUD() {
     setMetric('thrust', fv, fu, `ideal ${iv} ${iu}`);
     setMetric('mach', fmt(perf.Me, 2), '', `ideal ${fmt(t.Me, 2)}`);
     setMetric('tc', fmt(chamber.T, 0), 'K', `target ${fmt(live.Tc, 0)} K`);
-    setMetric('pc', fmt(chamber.p / 1e6, chamber.p < 1e6 ? 2 : 1), 'MPa', `target ${fmt(live.Pc / 1e6, 2)} MPa · ${fmt(live.Pc / 1e5, 0)} bar`);
+    setMetric('pc', fmt(chamber.p / 1e6, chamber.p < 1e6 ? 2 : 1), 'MPa', P.inj ? `c* efficiency ${fmt(100 * chamber.p / live.Pc, 0)} % · target ${fmt(live.Pc / 1e5, 0)} bar` : `target ${fmt(live.Pc / 1e6, 2)} MPa · ${fmt(live.Pc / 1e5, 0)} bar`);
     setMetric('isp', fmt(Math.max(perf.Isp, 0), 0), 's', `ideal ${fmt(t.Isp, 0)} s · vac ${fmt(t.IspVac, 0)} s`);
     const ratio = perf.pe / Math.max(atmosphere(live.alt).p, 1e-9);
     const mstate = atmosphere(live.alt).p < 1 ? 'vacuum' : ratio > 1.08 ? 'under-expanded' : ratio < 0.92 ? 'over-expanded' : 'near-ideal';
@@ -622,6 +682,10 @@ function updateTheoryPanel() {
       ${row('Isp', fmt(t.Isp, 0) + ' s', perf ? fmt(perf.Isp, 0) + ' s' : '—')}
       ${row('Chamber pressure', fmt((live ? live.Pc : 0) / 1e5, 1) + ' bar', chamber ? fmt(chamber.p / 1e5, 1) + ' bar' : '—')}
       ${row('Chamber temp.', fmt(live ? live.Tc : 0, 0) + ' K', chamber ? fmt(chamber.T, 0) + ' K' : '—')}
+      ${P && P.inj && chamber ? row('c* efficiency', '100 %', fmt(100 * chamber.p / live.Pc, 1) + ' %') : ''}
+      ${P && P.inj && chamberPerf ? row('Oxidiser unburnt at throat', '—', fmt(100 * chamberPerf.unburntOx, 1) + ' % of flow') : ''}
+      ${P && P.inj && chamberPerf ? row('Fuel vapour at throat', '—', fmt(100 * chamberPerf.fuelVapour, 1) + ' % of flow') : ''}
+      ${P && P.inj && wallGasT ? row('Gas temp. at chamber wall', '—', fmt(wallGasT, 0) + ' K') : ''}
       ${row('Separation point', (() => { const f = setup ? summerfieldPoint(setup.contour, live ? live.Pc : S.Pc * 1e5, S.gamma, pa) : null; return f === null ? 'attached' : fmt(f * 100, 0) + ' % of bell'; })(), !S.viscous ? 'viscosity off' : sep ? fmt(sep.frac * 100, 0) + ' % of bell' : 'attached')}
       ${sep ? row('Wall p / pa at separation', '0.40', fmt(sep.pRatio, 2)) : ''}
       <tr class="head"><td colspan="3" style="padding-top:10px">Ideal nozzle numbers</td></tr>
@@ -945,14 +1009,16 @@ function onChange(it) {
       if (S.prop !== 'custom') {
         const gChanged = Math.abs(p.gamma - S.gamma) > 1e-9;
         S.Tc = p.Tc; S.gamma = p.gamma; S.Mw = p.Mw; S.qAb = p.qAb; S.sAir = p.sAir;
-        ['Tc', 'gamma', 'Mw', 'qAb'].forEach(syncControl);
-        if (gChanged) restartSoon();
+        if (p.spray) S.OF = p.spray.OF;
+        ['Tc', 'gamma', 'Mw', 'qAb', 'OF'].forEach(syncControl);
+        if (gChanged || S.injMode) restartSoon();
       }
       break;
     }
     case 'mode': ascentT = 0; sweepT = 0; if (!S.throttleSweep && it.key === 'throttleSweep') { S.throttle = 100; syncControl('throttle'); } break;
   }
-  if (['Tc', 'gamma', 'Mw', 'qAb'].includes(it.key) && S.prop !== 'custom') { S.prop = 'custom'; syncControl('prop'); }
+  if (['Tc', 'gamma', 'Mw', 'qAb'].includes(it.key) && S.prop !== 'custom' && !S.injMode) { S.prop = 'custom'; syncControl('prop'); }
+  if (it.key === 'injMode') { view.fitted = false; }
   if (it.key === 'split' && S.split && !S.mirror) { S.mirror = true; syncControl('mirror'); view.fitted = false; fitView(); }
   if (it.key === 'mirror') { if (!S.mirror && S.split) { S.split = false; syncControl('split'); } view.fitted = false; fitView(); }
   if (it.key === 'cmap') renderer.setColormap(S.cmap);
@@ -965,7 +1031,9 @@ function applyPreset(key) {
   const p = PROPELLANTS[e.prop];
   Object.assign(S, { preset: key, prop: e.prop, Tc: p.Tc, gamma: p.gamma, Mw: p.Mw, qAb: p.qAb, sAir: p.sAir, Pc: e.Pc, throttle: 100, Dt: e.Dt, De: e.De,
     type: e.type, bellPct: e.bellPct, coneAngle: e.coneAngle, CR: e.CR, chamberLen: e.chamberLen, alt: e.alt, mach: e.mach,
-    base: e.base, domainL: e.domain, ascent: false, throttleSweep: false });
+    base: e.base, domainL: e.domain, ascent: false, throttleSweep: false, injMode: false });
+  if (p.spray) S.OF = p.spray.OF;
+  if (e.inj) Object.assign(S, e.inj);
   for (const k in rows) syncControl(k);
   refreshVisibility();
   view.fitted = false;
@@ -1084,7 +1152,8 @@ const HELP_HTML = `
 <tr><td><span class="kbd">H</span></td><td class="n">hide panel</td></tr>
 <tr><td><span class="kbd">Shift</span>+<span class="kbd">T</span></td><td class="n">run self-test</td></tr>
 </table>
-<p class="note"><b>Limits:</b> the flow is 2-D axisymmetric, so turbulence is modelled rather than fully resolved. Boundary layers are only a few cells thick and rely on a wall model. Afterburning is one global reaction. γ changes with the gas mixture but not with temperature. Results still sharpen with grid resolution. Treat the numbers as good engineering estimates for animation, not design data.</p>
+<p class="note"><b>Injectors:</b> switch on <i>Simulate injectors, sprays and flame</i> or pick an Injector preset. Fuel droplets are amber and oxidiser droplets are blue. Try the <i>Heat release</i> tab, then change injector type, orifice size or chamber length and watch c* efficiency, shown under Pc. Injector elements are rings because the solver is axisymmetric, so baffles and cavities can't show their effect on tangential instability.</p>
+    <p class="note"><b>Limits:</b> the flow is 2-D axisymmetric, so turbulence is modelled rather than fully resolved. Boundary layers are only a few cells thick and rely on a wall model. Afterburning is one global reaction. γ changes with the gas mixture but not with temperature. Results still sharpen with grid resolution. Treat the numbers as good engineering estimates for animation, not design data.</p>
 <p class="note"><b>Speed:</b> if it's sluggish, lower the grid resolution or the speed slider. On laptops with two GPUs, make Windows run your browser on the NVIDIA card: Settings → System → Display → Graphics → your browser → High performance.</p>
 `;
 
@@ -1332,7 +1401,7 @@ function boot() {
   if (/selftest/i.test(location.hash)) setTimeout(runSelfTest, 1500);
   // expose a small API for testing / tinkering from the console
   window.nozzle = { S, get setup() { return setup; }, get solver() { return solver; }, get renderer() { return renderer; }, restart,
-    get gpu() { return window.__gpu; }, get lossCount() { return lossCount; }, get stepsPerSec() { return stepsPerSec; }, get fps() { return fps; }, get budget() { return budget; }, applyPreset, setField, get perf() { return perf; }, get chamber() { return chamber; }, get sep() { return sep; }, get simTime() { return simTime; }, get P() { return P; }, get live() { return live; },
+    get gpu() { return window.__gpu; }, get lossCount() { return lossCount; }, get stepsPerSec() { return stepsPerSec; }, get fps() { return fps; }, get budget() { return budget; }, applyPreset, setField, get perf() { return perf; }, get chamber() { return chamber; }, get chamberPerf() { return chamberPerf; }, get wallGasT() { return wallGasT; }, processThroat, processChamberWall, get sep() { return sep; }, get simTime() { return simTime; }, get P() { return P; }, get live() { return live; },
     stepNow: (n) => { solver.step(n, P); stepsTotal += n; readback(); processWall(solver._readRect(solver.drawWallRow(), 0, 0, setup.Nx, 1)); updateHUD(); }, composite, setRunning, view, fitView,
     runSelfTest, get selfTestReport() { return window.__selfTestReport; },
     loseContext: () => { const e = gl.getExtension('WEBGL_lose_context'); e.loseContext(); setTimeout(() => e.restoreContext(), 500); } };

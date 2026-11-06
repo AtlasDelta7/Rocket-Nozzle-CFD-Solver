@@ -17,6 +17,9 @@ const FIELDS = [
   { id: 'flame',  label: 'Flame (visual)',   unit: '' },
   { id: 'turb',   label: 'Eddy viscosity',   unit: '' },
   { id: 'burn',   label: 'Afterburn',        unit: '' },
+  { id: 'fuel',   label: 'Fuel vapour',      unit: '' },
+  { id: 'ox',     label: 'Oxidiser vapour',  unit: '' },
+  { id: 'heat',   label: 'Heat release',     unit: '' },
 ];
 
 const COLORMAPS = {
@@ -59,6 +62,8 @@ uniform sampler2D uA; uniform sampler2D uB;
 uniform int uField;
 uniform vec2 uRange;          // display range (after log, if any)
 uniform float uReN, uRaN;     // normalised gas constants
+uniform vec3 uRs;             // fuel vapour, oxidiser vapour, products
+uniform vec4 uChemV;          // (unused, oxidiser per unit fuel, kinetic constant, unused)
 uniform vec4 uTscale;         // (T_REF, Tc_K, Ta_K, unused)
 uniform float uSchlGain;
 uniform float uVelScale;      // U_REF
@@ -83,7 +88,7 @@ void main() {
   float c = soundSpeed(q);
   float spd = length(q.w.yz);
   float M = spd / c;
-  float Rm = mix(uRaN, uReN, q.s.x);
+  float Rm = (1.0 - q.s.x) * uRaN + q.s.y * uRs.x + q.s.w * uRs.y + max(q.s.x - q.s.y - q.s.w, 0.0) * uRs.z;
   float T = p / (rho * Rm) * uTscale.x;
   float v = 0.0;
   if (uField == 0) v = T;
@@ -111,6 +116,15 @@ void main() {
   else if (uField == 7) v = q.s.x;
   else if (uField == 9) { vec4 m = texelFetch(uT2, ij, 0); v = m.w > 0.0 ? log(max(m.x / m.w, 1.0)) / log(10.0) : 0.0; }
   else if (uField == 10) v = q.s.x > 0.003 ? (q.s.x - q.s.y) / q.s.x : 0.0;
+  else if (uField == 11) v = q.s.y;
+  else if (uField == 12) v = q.s.w;
+  else if (uField == 13) {
+    // burning rate per unit mass on a log scale, same model as the solver
+    vec4 m = texelFetch(uT2, ij, 0);
+    float avail = min(q.s.y, (q.s.w + 0.233 * max(1.0 - q.s.x, 0.0)) / uChemV.y);
+    float kin = uChemV.z * p * exp(-9000.0 / max(T, 200.0));
+    v = log(1.0 + 1e5 * avail * min(max(m.z, 4.0 * m.x / rho), kin)) / log(10.0);
+  }
   else v = T;
   float t = (v - uRange.x) / (uRange.y - uRange.x);
   if (uField == 2) t = v;
@@ -413,6 +427,7 @@ class Renderer {
     gl.uniform1i(pr.u.uField, V.fieldIndex === 8 ? 0 : V.fieldIndex);
     gl.uniform2f(pr.u.uRange, V.range[0], V.range[1]);
     gl.uniform1f(pr.u.uReN, V.ReN); gl.uniform1f(pr.u.uRaN, V.RaN);
+    gl.uniform3fv(pr.u.uRs, V.Rs); gl.uniform4fv(pr.u.uChemV, V.chemK);
     gl.uniform4f(pr.u.uTscale, T_REF, V.Tc, V.Ta, 0);
     gl.uniform1f(pr.u.uSchlGain, V.schlGain);
     gl.uniform1f(pr.u.uVelScale, U_REF);
@@ -469,6 +484,10 @@ class Renderer {
       gl.uniform3f(pp.u.uColor, 0.6, 0.66, 0.72);
       gl.drawArrays(gl.POINTS, 0, this.PN[0] * this.PN[1]);
       gl.disable(gl.BLEND);
+    }
+    if (V.droplets && s.spray && s.spray.ready) {
+      s.spray.draw(V.view, V.mirror, V.dropScale, V.dpr);
+      gl.bindVertexArray(s.vao);
     }
     if (V.glow) {
       const P = this.post;

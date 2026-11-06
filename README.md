@@ -15,6 +15,55 @@ A real-time, GPU-accelerated compressible-flow solver for rocket engines and the
 
 ---
 
+## Injectors and chamber design
+
+Switch on **Simulate injectors, sprays and flame** in *Injector & chamber*, or pick one of the *Injector* presets. The hot-gas source is replaced by a solid injector plate. Liquid propellant is sprayed in, breaks up, evaporates, mixes and burns, and chamber pressure and temperature become results rather than inputs.
+
+![Impinging injector: droplets, flame, nozzle and plume](images/injector-flame.png)
+
+| | |
+|---|---|
+| ![Heat release close to the injector plate](images/injector-heat.png) | ![Ring baffle, acoustic cavity and film cooling](images/chamber-hardware.png) |
+| **Heat release** next to a showerhead plate. Fuel droplets are amber and oxidiser droplets are blue. | **Chamber hardware:** ring baffle, acoustic cavity and film cooling. |
+
+**Injector types** (kerolox, methalox or hydrolox)
+
+| Type | How it's modelled |
+|---|---|
+| Showerhead | Alternating rings of fuel and oxidiser jets, which mix slowly |
+| Coaxial shear | An oxidiser core with fast fuel on both sides |
+| Impinging doublets | Fuel and oxidiser jets aimed together, shattering into a fine fan where they meet |
+| Pintle | A central post with a spray cone set by the momentum ratio |
+
+**Chamber design:** chamber length and contraction ratio (with L* shown), mixture ratio, injector pressure drop, orifice size, ring baffles, an acoustic cavity and film cooling.
+
+**How it works**
+- **Droplets:** 65,536 GPU parcels feel drag (Schiller-Naumann), evaporate (d²-law with a Ranz-Marshall correction) and break up above a Weber number of 12. What they lose goes into the gas, so mass, momentum and energy are coupled both ways.
+- **Combustion:** one global reaction, limited by the slower of turbulent mixing and a finite-rate ignition limit. Its heat is set so burning at the design mixture ratio reaches the propellant's chamber temperature.
+- **Readouts:** c* efficiency, unburnt propellant at the throat, and gas temperature at the chamber wall, in the *Theory vs simulation* panel.
+
+**Results at 70 bar on the Medium grid** (about 2 ms of simulated time; the hardware run about 1.6 ms)
+
+| Preset | Chamber pressure | Isp (simulated / ideal) |
+|---|---|---|
+| Showerhead, kerolox | 64.6 bar | 272 / 292 s |
+| Impinging, kerolox | 65.8 bar | 281 / 292 s |
+| Coaxial, methalox | 68.3 bar | 287 / 300 s |
+| Coaxial, hydrolox (1.5 ms) | 68.2 bar | 348 / 363 s |
+| Baffle, cavity and 10 % film, kerolox | 65.5 bar | 283 / 292 s |
+| Pintle, kerolox (3.5 ms) | 63.5 bar | 264 / 292 s |
+
+**Pintle:** this preset takes longest to settle, reading 53 bar at 2 ms and 63.5 bar at 3.5 ms. A cold core stays along the axis behind the post, which makes the on-axis chamber temperature readout misleading. Treat the core as a limit of the mixing model, not a verdict on the design.
+
+### Injector limits
+- **Elements are rings.** The grid is 2-D axisymmetric, so discrete orifices become rings, and impinging fans lie in the wrong plane.
+- **Baffles and cavities can't show their main job.** Their main purpose is damping tangential instability, and tangential modes can't exist in an axisymmetric solver. Only longitudinal and radial acoustics appear.
+- **Primary atomisation is estimated,** not resolved: starting drop size is a set fraction of orifice size. Propellant property values are engineering estimates, and evaporation near the critical point is simplified.
+- **Chamber turbulence has a set minimum,** because a 2-D grid can't sustain it. This strongly affects mixing, so comparisons between injectors are qualitative.
+- **Chamber starts already burning,** so ignition isn't simulated.
+
+---
+
 ## What it solves
 
 It solves the **compressible Navier-Stokes equations** on a 2-D axisymmetric grid. The grid covers the combustion chamber, the converging–diverging nozzle and the air around the engine. Shock diamonds, Mach disks, expansion fans, boundary layers, separation, afterburning and the plume changing with altitude all come out of the solution.
@@ -70,7 +119,7 @@ Downstream of that point, the near-wall flow runs back up the bell at around 20�
 
 ## Controls
 
-**Top tabs:** temperature · Mach · Schlieren · pressure · density · velocity · vorticity · exhaust fraction · flame (a "what it might look like" render) · eddy viscosity · afterburn.
+**Top tabs:** temperature · Mach · Schlieren · pressure · density · velocity · vorticity · exhaust fraction · flame (a "what it might look like" render) · eddy viscosity · afterburn · fuel vapour · oxidiser vapour · heat release.
 
 **Right panel**
 - **Presets** (top dropdown): over-expanded vacuum bell at sea level, shock diamonds, ideal expansion, high-altitude under-expanded (big Mach disk), upper stage at 30 km, cold-gas thruster, hybrid motor, supersonic flight with a rocket base.
@@ -97,13 +146,13 @@ Measured on a laptop with an RTX 3050 Ti in Chrome, raw solver speed:
 
 | Grid | Steps per second |
 |---|---|
-| Draft 384 × 108 | ≈ 1,470 |
-| Low 640 × 179 | ≈ 1,140 |
-| Medium 1024 × 287 (default) | ≈ 590 |
-| High 1536 × 430 | ≈ 285 |
-| Ultra 2048 × 573 | ≈ 160 |
+| Draft 384 × 108 | ≈ 1,540 |
+| Low 640 × 179 | ≈ 1,190 |
+| Medium 1024 × 287 (default) | ≈ 530 |
+| High 1536 × 430 | ≈ 245 |
+| Ultra 2048 × 573 | ≈ 145 |
 
-Switching viscosity and afterburning off raises Medium to about 750 steps per second. A full start-up and settled plume (about 1 ms of simulated time) takes roughly 15–25 s on Medium. Separation in the over-expanded preset takes about 3 ms to settle, or about a minute.
+Injector mode settles to about 330 steps per second on Medium once the sprays are fully developed. Switching viscosity and afterburning off raises Medium to about 710 steps per second. A full start-up and settled plume (about 1 ms of simulated time) takes roughly 15–25 s on Medium. Separation in the over-expanded preset takes about 3 ms to settle, or about a minute.
 
 - **Make sure the browser uses the NVIDIA GPU:** Windows Settings → System → Display → Graphics → *Add desktop app* → the browser's `.exe` → Options → *High performance*. The top-right readout shows which GPU is in use, in amber if it's integrated graphics.
 - The app chooses how many steps to run per frame automatically. It adds steps while the GPU keeps up and backs off when work piles up. The **Speed** slider sets the maximum; the label shows e.g. `12/20 st/fr` when it's holding back.
@@ -116,4 +165,4 @@ Switching viscosity and afterburning off raises Medium to about 750 steps per se
 - `Rocket Nozzle CFD Solver.html`: the whole app, a single self-contained file that works offline.
 - `README.md`: this file.
 - `images/`: the screenshots above.
-- `source/`: the same code split into modules (physics, solver, renderer, UI) if you want to read or modify it. Run `python build.py` in that folder to rebuild the single HTML file.
+- `source/`: the same code split into modules (physics, solver, sprays, renderer, UI) if you want to read or modify it. Run `python build.py` in that folder to rebuild the single HTML file.

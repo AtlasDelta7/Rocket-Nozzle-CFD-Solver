@@ -204,10 +204,24 @@ function buildContour(o) {
 // qAb: heat released when the exhaust's CO and H2 burn in air (MJ per kg of exhaust).
 // sAir: air needed to burn it (kg per kg of exhaust). Estimates from chemical
 // equilibrium at typical fuel-rich mixture ratios; solid and hydrazine by hand.
+// spray: liquid-injection data for the injector-resolved chamber.
+//   OF design mixture ratio, s oxygen per kg of fuel at stoichiometric, then for each
+//   propellant: liquid density, boiling point and injection temperature (K), latent heat and
+//   liquid specific heat (J/kg, J/kg K), surface tension (N/m), vapour molar mass.
+// Engineering estimates. Boiling points are held near the critical point because these
+// propellants are at or above critical pressure in a chamber; d²-law evaporation is a
+// simplification there. Liquid-hydrogen injectors feed mostly gas, so hydrogen is a very
+// fine, almost latent-heat-free spray.
+const SPRAY_FLUIDS = {
+  rp1: { rho: 810, Tb: 650, Tinj: 300, L: 250e3, cl: 2000, sigma: 0.02, Mw: 100 },
+  ch4: { rho: 420, Tb: 190, Tinj: 112, L: 300e3, cl: 3500, sigma: 0.005, Mw: 16 },
+  h2:  { rho: 40,  Tb: 60,  Tinj: 40,  L: 20e3,  cl: 14000, sigma: 0.001, Mw: 2 },
+  lox: { rho: 1140, Tb: 155, Tinj: 90, L: 150e3, cl: 1700, sigma: 0.005, Mw: 32 },
+};
 const PROPELLANTS = {
-  kerolox:  { name: 'LOX / RP-1 (kerolox)',  Tc: 3670, gamma: 1.22, Mw: 22.0, qAb: 6.8, sAir: 1.8 },
-  methalox: { name: 'LOX / CH4 (methalox)',  Tc: 3550, gamma: 1.21, Mw: 20.5, qAb: 3.0, sAir: 0.8 },
-  hydrolox: { name: 'LOX / LH2 (hydrolox)',  Tc: 3400, gamma: 1.20, Mw: 13.5, qAb: 4.2, sAir: 1.2 },
+  kerolox:  { name: 'LOX / RP-1 (kerolox)',  Tc: 3670, gamma: 1.22, Mw: 22.0, qAb: 6.8, sAir: 1.8, spray: { OF: 2.3, s: 3.4, fuel: 'rp1', ox: 'lox' } },
+  methalox: { name: 'LOX / CH4 (methalox)',  Tc: 3550, gamma: 1.21, Mw: 20.5, qAb: 3.0, sAir: 0.8, spray: { OF: 3.0, s: 4.0, fuel: 'ch4', ox: 'lox' } },
+  hydrolox: { name: 'LOX / LH2 (hydrolox)',  Tc: 3400, gamma: 1.20, Mw: 13.5, qAb: 4.2, sAir: 1.2, spray: { OF: 6.0, s: 8.0, fuel: 'h2', ox: 'lox' } },
   hybrid:   { name: 'N2O / HTPB (hybrid)',   Tc: 3150, gamma: 1.23, Mw: 26.0, qAb: 2.0, sAir: 0.5 },
   solid:    { name: 'APCP (solid motor)',    Tc: 3100, gamma: 1.20, Mw: 25.0, qAb: 4.6, sAir: 1.2 },
   hydrazine:{ name: 'Hydrazine monoprop',    Tc: 1150, gamma: 1.28, Mw: 13.0, qAb: 14.0, sAir: 4.2 },
@@ -215,7 +229,38 @@ const PROPELLANTS = {
   custom:   { name: 'Custom',                Tc: 3000, gamma: 1.22, Mw: 22.0, qAb: 3.0, sAir: 1 },
 };
 
+const CHAMBER_HW = { film: 0, baffles: 0, baffleH: 30, cavD: 0, cavW: 40 };
 const ENGINE_PRESETS = {
+  injShower: {
+    name: 'Injector — showerhead, kerolox (droplets and flame)',
+    prop: 'kerolox', Pc: 70, Dt: 30, De: 85, type: 'bell', bellPct: 80, coneAngle: 15,
+    CR: 5, chamberLen: 6, alt: 0, mach: 0, base: false, domain: 0.5, field: 'temp',
+    inj: { injMode: true, injType: 'shower', injRings: 6, injDP: 20, injD: 1.5, ...CHAMBER_HW },
+  },
+  injCoax: {
+    name: 'Injector — coaxial shear, methalox',
+    prop: 'methalox', Pc: 70, Dt: 30, De: 85, type: 'bell', bellPct: 80, coneAngle: 15,
+    CR: 5, chamberLen: 6, alt: 0, mach: 0, base: false, domain: 0.5, field: 'temp',
+    inj: { injMode: true, injType: 'coax', injRings: 4, injDP: 15, injD: 2, ...CHAMBER_HW },
+  },
+  injImpinge: {
+    name: 'Injector — impinging doublets, kerolox',
+    prop: 'kerolox', Pc: 70, Dt: 30, De: 85, type: 'bell', bellPct: 80, coneAngle: 15,
+    CR: 5, chamberLen: 6, alt: 0, mach: 0, base: false, domain: 0.5, field: 'temp',
+    inj: { injMode: true, injType: 'impinge', injRings: 4, injDP: 20, injD: 1.2, injAngle: 30, ...CHAMBER_HW },
+  },
+  injPintle: {
+    name: 'Injector — pintle, kerolox',
+    prop: 'kerolox', Pc: 70, Dt: 30, De: 85, type: 'bell', bellPct: 80, coneAngle: 15,
+    CR: 5, chamberLen: 6, alt: 0, mach: 0, base: false, domain: 0.5, field: 'temp',
+    inj: { injMode: true, injType: 'pintle', injRings: 1, injDP: 20, injD: 1, injTMR: 0.4, ...CHAMBER_HW },
+  },
+  injHardware: {
+    name: 'Chamber hardware — baffles, cavity and film cooling',
+    prop: 'kerolox', Pc: 70, Dt: 30, De: 85, type: 'bell', bellPct: 80, coneAngle: 15,
+    CR: 5, chamberLen: 6, alt: 0, mach: 0, base: false, domain: 0.5, field: 'temp',
+    inj: { injMode: true, injType: 'impinge', injRings: 4, injDP: 20, injD: 1.2, injAngle: 30, ...CHAMBER_HW, film: 10, baffles: 1, baffleH: 30, cavD: 12, cavW: 40 },
+  },
   demo: {
     name: 'Workbench demo — 14 kN kerolox (sea level)',
     prop: 'kerolox', Pc: 196, Dt: 23, De: 119, type: 'bell', bellPct: 80, coneAngle: 15,

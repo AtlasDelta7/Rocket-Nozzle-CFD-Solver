@@ -4,7 +4,7 @@ import pathlib
 here = pathlib.Path(__file__).resolve().parent
 html = (here / 'index.html').read_text(encoding='utf-8')
 parts = []
-for f in ['physics.js', 'cutcell.js', 'solver.js', 'simsetup.js', 'render.js', 'app.js']:
+for f in ['physics.js', 'cutcell.js', 'solver.js', 'spray.js', 'simsetup.js', 'render.js', 'app.js']:
     parts.append(f'// ===== {f} =====\n' + (here / f).read_text(encoding='utf-8'))
 js = '\n'.join(parts).replace('</script>', '<\\/script>')
 out = html.replace('<!--SCRIPTS-->', '<script>\n' + js + '\n</script>')

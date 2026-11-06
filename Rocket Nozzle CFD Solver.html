@@ -356,10 +356,24 @@ function buildContour(o) {
 // qAb: heat released when the exhaust's CO and H2 burn in air (MJ per kg of exhaust).
 // sAir: air needed to burn it (kg per kg of exhaust). Estimates from chemical
 // equilibrium at typical fuel-rich mixture ratios; solid and hydrazine by hand.
+// spray: liquid-injection data for the injector-resolved chamber.
+//   OF design mixture ratio, s oxygen per kg of fuel at stoichiometric, then for each
+//   propellant: liquid density, boiling point and injection temperature (K), latent heat and
+//   liquid specific heat (J/kg, J/kg K), surface tension (N/m), vapour molar mass.
+// Engineering estimates. Boiling points are held near the critical point because these
+// propellants are at or above critical pressure in a chamber; d²-law evaporation is a
+// simplification there. Liquid-hydrogen injectors feed mostly gas, so hydrogen is a very
+// fine, almost latent-heat-free spray.
+const SPRAY_FLUIDS = {
+  rp1: { rho: 810, Tb: 650, Tinj: 300, L: 250e3, cl: 2000, sigma: 0.02, Mw: 100 },
+  ch4: { rho: 420, Tb: 190, Tinj: 112, L: 300e3, cl: 3500, sigma: 0.005, Mw: 16 },
+  h2:  { rho: 40,  Tb: 60,  Tinj: 40,  L: 20e3,  cl: 14000, sigma: 0.001, Mw: 2 },
+  lox: { rho: 1140, Tb: 155, Tinj: 90, L: 150e3, cl: 1700, sigma: 0.005, Mw: 32 },
+};
 const PROPELLANTS = {
-  kerolox:  { name: 'LOX / RP-1 (kerolox)',  Tc: 3670, gamma: 1.22, Mw: 22.0, qAb: 6.8, sAir: 1.8 },
-  methalox: { name: 'LOX / CH4 (methalox)',  Tc: 3550, gamma: 1.21, Mw: 20.5, qAb: 3.0, sAir: 0.8 },
-  hydrolox: { name: 'LOX / LH2 (hydrolox)',  Tc: 3400, gamma: 1.20, Mw: 13.5, qAb: 4.2, sAir: 1.2 },
+  kerolox:  { name: 'LOX / RP-1 (kerolox)',  Tc: 3670, gamma: 1.22, Mw: 22.0, qAb: 6.8, sAir: 1.8, spray: { OF: 2.3, s: 3.4, fuel: 'rp1', ox: 'lox' } },
+  methalox: { name: 'LOX / CH4 (methalox)',  Tc: 3550, gamma: 1.21, Mw: 20.5, qAb: 3.0, sAir: 0.8, spray: { OF: 3.0, s: 4.0, fuel: 'ch4', ox: 'lox' } },
+  hydrolox: { name: 'LOX / LH2 (hydrolox)',  Tc: 3400, gamma: 1.20, Mw: 13.5, qAb: 4.2, sAir: 1.2, spray: { OF: 6.0, s: 8.0, fuel: 'h2', ox: 'lox' } },
   hybrid:   { name: 'N2O / HTPB (hybrid)',   Tc: 3150, gamma: 1.23, Mw: 26.0, qAb: 2.0, sAir: 0.5 },
   solid:    { name: 'APCP (solid motor)',    Tc: 3100, gamma: 1.20, Mw: 25.0, qAb: 4.6, sAir: 1.2 },
   hydrazine:{ name: 'Hydrazine monoprop',    Tc: 1150, gamma: 1.28, Mw: 13.0, qAb: 14.0, sAir: 4.2 },
@@ -367,7 +381,38 @@ const PROPELLANTS = {
   custom:   { name: 'Custom',                Tc: 3000, gamma: 1.22, Mw: 22.0, qAb: 3.0, sAir: 1 },
 };
 
+const CHAMBER_HW = { film: 0, baffles: 0, baffleH: 30, cavD: 0, cavW: 40 };
 const ENGINE_PRESETS = {
+  injShower: {
+    name: 'Injector — showerhead, kerolox (droplets and flame)',
+    prop: 'kerolox', Pc: 70, Dt: 30, De: 85, type: 'bell', bellPct: 80, coneAngle: 15,
+    CR: 5, chamberLen: 6, alt: 0, mach: 0, base: false, domain: 0.5, field: 'temp',
+    inj: { injMode: true, injType: 'shower', injRings: 6, injDP: 20, injD: 1.5, ...CHAMBER_HW },
+  },
+  injCoax: {
+    name: 'Injector — coaxial shear, methalox',
+    prop: 'methalox', Pc: 70, Dt: 30, De: 85, type: 'bell', bellPct: 80, coneAngle: 15,
+    CR: 5, chamberLen: 6, alt: 0, mach: 0, base: false, domain: 0.5, field: 'temp',
+    inj: { injMode: true, injType: 'coax', injRings: 4, injDP: 15, injD: 2, ...CHAMBER_HW },
+  },
+  injImpinge: {
+    name: 'Injector — impinging doublets, kerolox',
+    prop: 'kerolox', Pc: 70, Dt: 30, De: 85, type: 'bell', bellPct: 80, coneAngle: 15,
+    CR: 5, chamberLen: 6, alt: 0, mach: 0, base: false, domain: 0.5, field: 'temp',
+    inj: { injMode: true, injType: 'impinge', injRings: 4, injDP: 20, injD: 1.2, injAngle: 30, ...CHAMBER_HW },
+  },
+  injPintle: {
+    name: 'Injector — pintle, kerolox',
+    prop: 'kerolox', Pc: 70, Dt: 30, De: 85, type: 'bell', bellPct: 80, coneAngle: 15,
+    CR: 5, chamberLen: 6, alt: 0, mach: 0, base: false, domain: 0.5, field: 'temp',
+    inj: { injMode: true, injType: 'pintle', injRings: 1, injDP: 20, injD: 1, injTMR: 0.4, ...CHAMBER_HW },
+  },
+  injHardware: {
+    name: 'Chamber hardware — baffles, cavity and film cooling',
+    prop: 'kerolox', Pc: 70, Dt: 30, De: 85, type: 'bell', bellPct: 80, coneAngle: 15,
+    CR: 5, chamberLen: 6, alt: 0, mach: 0, base: false, domain: 0.5, field: 'temp',
+    inj: { injMode: true, injType: 'impinge', injRings: 4, injDP: 20, injD: 1.2, injAngle: 30, ...CHAMBER_HW, film: 10, baffles: 1, baffleH: 30, cavD: 12, cavW: 40 },
+  },
   demo: {
     name: 'Workbench demo — 14 kN kerolox (sea level)',
     prop: 'kerolox', Pc: 196, Dt: 23, De: 119, type: 'bell', bellPct: 80, coneAngle: 15,
@@ -435,7 +480,7 @@ if (typeof module !== 'undefined') {
 'use strict';
 
 function buildCutGeometry(o) {
-  // o: { Nx, Nr, dx, contour, tw, base, xBase, bodyR, mode: 'cut' | 'stair' }
+  // o: { Nx, Nr, dx, contour, tw, base, xBase, bodyR, mode: 'cut' | 'stair', solids: [{x0,x1,r0,r1}] in metres }
   const { Nx, Nr, dx, contour } = o;
   const cut = o.mode !== 'stair';
   const xeC = contour.xe / dx, twC = o.tw / dx, xBaseC = o.xBase / dx, bodyC = o.bodyR / dx;
@@ -455,7 +500,9 @@ function buildCutGeometry(o) {
     if (a < -1e8 || b < -1e8) return contour.radiusAt(Math.min(xc * dx, contour.xe)) / dx;
     return a + (b - a) * t;
   };
+  const solids = (o.solids || []).map(s => ({ x0: s.x0 / dx, x1: s.x1 / dx, r0: s.r0 / dx, r1: s.r1 / dx }));
   const fluid = (xc, rc) => {
+    for (const s of solids) if (xc >= s.x0 && xc <= s.x1 && rc >= s.r0 && rc <= s.r1) return false;
     if (xc <= xeC) {
       const ri = RinAt(xc);
       if (rc >= ri && rc <= ri + twC) return false;
@@ -474,6 +521,7 @@ function buildCutGeometry(o) {
   const maybeCut = (i, j) => {
     if (!cut) return false;
     const x0 = i, x1 = i + 1, r0 = j, r1 = j + 1;
+    for (const s of solids) if (overlaps(x0, x1, s.x0 - 1e-6, s.x1 + 1e-6) && overlaps(r0, r1, s.r0 - 1e-6, s.r1 + 1e-6)) return true;
     if (colMax[i] < -1e8) return false;          // column entirely downstream of the nozzle
     const mn = colMin[i], mx = colMax[i];
     if (overlaps(r0, r1, mn - 1e-6, mx + 1e-6)) return true;
@@ -636,7 +684,7 @@ uniform ivec2 uN;          // Nx, Nr
 uniform sampler2D uMask;   // r > 0.5 : solid
 const float RHO_MIN = 1e-7;
 const float P_MIN   = 1e-7;
-struct Prim { vec4 w; vec3 s; };    // w = (rho, u, v, p), s = (Z, F, G)
+struct Prim { vec4 w; vec4 s; };    // w = (rho, u, v, p), s = (Z, F, G, O)
 
 bool solidAt(ivec2 c) { return texelFetch(uMask, c, 0).r > 0.5; }
 
@@ -645,7 +693,7 @@ Prim toPrim(vec4 a, vec4 b) {
   vec2 vel = a.yz / rho;
   float G = max(b.z, 0.5);
   float p = max((a.w - 0.5 * rho * dot(vel, vel)) / G, P_MIN);
-  return Prim(vec4(rho, vel, p), vec3(clamp(b.x / rho, 0.0, 1.0), clamp(b.y / rho, 0.0, 1.0), G));
+  return Prim(vec4(rho, vel, p), vec4(clamp(b.x / rho, 0.0, 1.0), clamp(b.y / rho, 0.0, 1.0), G, clamp(b.w / rho, 0.0, 1.0)));
 }
 float soundSpeed(Prim q) { return sqrt((1.0 + 1.0 / q.s.z) * q.w.w / q.w.x); }
 `;
@@ -673,6 +721,7 @@ uniform vec4 uInlet;        // (unused here, acoustic absorption 0-1, G exhaust,
 uniform float uPambStart;   // pressure at which the ignition ramp starts
 uniform float uRamp;        // ramp duration (grid time units); <= 0 -> instant
 uniform float uRcCells;     // chamber radius in cells (reservoir rows)
+uniform float uInj;         // 1: injector-resolved chamber, the face is a solid plate
 layout(location = 0) out vec4 oW;
 layout(location = 1) out vec4 oWb;
 Prim interior(ivec2 c) { return toPrim(texelFetch(uA, c, 0), texelFetch(uB, c, 0)); }
@@ -681,11 +730,12 @@ void main() {
   int i = P.x, j = P.y, Nx = uN.x, Nr = uN.y;
   bool mir = j < 0;
   if (mir) j = -j - 1;
-  Prim q = Prim(uAmb, vec3(0.0, 0.0, uInlet.w));
+  Prim q = Prim(uAmb, vec4(0.0, 0.0, uInlet.w, 0.0));
   bool wall = false;
   if (i < 0) {
     // left boundary: injector face (stagnation inlet) / chamber wall / free stream
     if (j < Nr && solidAt(ivec2(0, j))) wall = true;
+    else if (float(j) + 0.5 < uRcCells && uInj > 0.5) wall = true;
     else if (float(j) + 0.5 < uRcCells) {
       vec4 st = texelFetch(uStep, ivec2(0), 0);
       float t = uTimeSel == 1 ? st.y : st.z;
@@ -703,7 +753,7 @@ void main() {
       float u = mix(ui, ut, uInlet.y);
       float T = T0 - u * u * (g - 1.0) / (2.0 * g * R);
       float p = P0 * pow(T / T0, g * G);
-      q = Prim(vec4(p / (R * T), u, 0.0, p), vec3(1.0, 1.0, G));
+      q = Prim(vec4(p / (R * T), u, 0.0, p), vec4(1.0, 1.0, G, 0.0));
     }
   } else if (j >= Nr) {
     // top: pressure far field
@@ -729,7 +779,7 @@ void main() {
   }
   if (wall) { oW = vec4(-1.0, 0.0, 0.0, 1.0); oWb = vec4(0.0); return; }
   if (mir) q.w.z = -q.w.z;           // axis of symmetry
-  oW = q.w; oWb = vec4(q.s, 0.0);
+  oW = q.w; oWb = q.s;
 }
 `;
 
@@ -742,17 +792,18 @@ function makeFluxShader(dirR) { return GLSL_COMMON + `
 #define DIR_R ${dirR ? 1 : 0}
 uniform sampler2D uGeoA;    // (V, Am, Ax_west, Ar_south); negative area => first order
 uniform sampler2D uW;       // padded primitive (rho, u, v, p); rho < 0 marks a wall cell
-uniform sampler2D uWb;      // padded (Z, F, G, 0)
+uniform sampler2D uWb;      // padded (Z, F, G, O)
 uniform float uLimiter;     // 0 = first order, 1 = second order
 uniform float uHllBlend;    // sensitivity of HLL blending (0 disables)
 layout(location = 0) out vec4 oF;
 layout(location = 1) out vec4 oFY;
+layout(location = 2) out vec4 oFO;
 
 Prim cellP(int i, int j, out bool s) {
   ivec2 c = ivec2(i + 2, j + 2);
   vec4 w = texelFetch(uW, c, 0);
   s = w.x < 0.0;
-  Prim q = Prim(w, texelFetch(uWb, c, 0).xyz);
+  Prim q = Prim(w, texelFetch(uWb, c, 0));
 #if DIR_R
   q.w.yz = q.w.zy;          // face-normal frame: normal velocity in .y
 #endif
@@ -770,7 +821,7 @@ float jumpRatio(float a, float b) { return abs(a - b) / min(a, b); }
 void main() {
   ivec2 ij = ivec2(gl_FragCoord.xy);
   int i = ij.x, j = ij.y;
-  oF = vec4(0.0); oFY = vec4(0.0);
+  oF = vec4(0.0); oFY = vec4(0.0); oFO = vec4(0.0);
   vec4 geo = texelFetch(uGeoA, ij, 0);
 #if DIR_R
   float area = geo.w;
@@ -805,12 +856,12 @@ void main() {
     if (uLimiter > 0.5 && area > 0.0) {
       vec4 dL = vanLeer(c1.w - c0.w, c2.w - c1.w);
       vec4 dR = vanLeer(c2.w - c1.w, c3.w - c2.w);
-      vec3 yL = vanLeer(vec4(c1.s - c0.s, 0.0), vec4(c2.s - c1.s, 0.0)).xyz;
-      vec3 yR = vanLeer(vec4(c2.s - c1.s, 0.0), vec4(c3.s - c2.s, 0.0)).xyz;
+      vec4 yL = vanLeer(c1.s - c0.s, c2.s - c1.s);
+      vec4 yR = vanLeer(c2.s - c1.s, c3.s - c2.s);
       vec4 tL = c1.w + 0.5 * dL, tR = c2.w - 0.5 * dR;
       if (tL.x > 0.0 && tL.w > 0.0 && tR.x > 0.0 && tR.w > 0.0) {
-        WL = Prim(tL, clamp(c1.s + 0.5 * yL, vec3(0.0, 0.0, 0.5), vec3(1.0, 1.0, 100.0)));
-        WR = Prim(tR, clamp(c2.s - 0.5 * yR, vec3(0.0, 0.0, 0.5), vec3(1.0, 1.0, 100.0)));
+        WL = Prim(tL, clamp(c1.s + 0.5 * yL, vec4(0.0, 0.0, 0.5, 0.0), vec4(1.0, 1.0, 100.0, 1.0)));
+        WR = Prim(tR, clamp(c2.s - 0.5 * yR, vec4(0.0, 0.0, 0.5, 0.0), vec4(1.0, 1.0, 100.0, 1.0)));
       }
     }
   }
@@ -831,8 +882,8 @@ void main() {
   float SR = max(uR + cR, uT + cT);
   vec4 FL = vec4(rL * uL, rL * uL * uL + pL, rL * uL * vL, uL * (EL + pL));
   vec4 FR = vec4(rR * uR, rR * uR * uR + pR, rR * uR * vR, uR * (ER + pR));
-  vec2 FYL = rL * uL * WL.s.xy, FYR = rR * uR * WR.s.xy;
-  vec4 F; vec2 FY; float uf, Gf;     // uf, Gf: face speed and upwind G for the G equation
+  vec3 FYL = rL * uL * WL.s.xyw, FYR = rR * uR * WR.s.xyw;
+  vec4 F; vec3 FY; float uf, Gf;     // uf, Gf: face speed and upwind G for the G equation
   if (SL >= 0.0) { F = FL; FY = FYL; uf = uL; Gf = GL; }
   else if (SR <= 0.0) { F = FR; FY = FYR; uf = uR; Gf = GR; }
   else {
@@ -840,17 +891,17 @@ void main() {
     vec4 UR = vec4(rR, rR * uR, rR * vR, ER);
     float inv = 1.0 / (SR - SL);
     vec4 Fhll = (SR * FL - SL * FR + SL * SR * (UR - UL)) * inv;
-    vec2 FYhll = (SR * FYL - SL * FYR + SL * SR * (rR * WR.s.xy - rL * WL.s.xy)) * inv;
+    vec3 FYhll = (SR * FYL - SL * FYR + SL * SR * (rR * WR.s.xyw - rL * WL.s.xyw)) * inv;
     float Ss = (pR - pL + rL * uL * (SL - uL) - rR * uR * (SR - uR)) / (rL * (SL - uL) - rR * (SR - uR));
     bool left = Ss >= 0.0;
     float rK = left ? rL : rR, uK = left ? uL : uR, vK = left ? vL : vR, pK = left ? pL : pR;
     float EK = left ? EL : ER, SK = left ? SL : SR;
-    vec2 YK = left ? WL.s.xy : WR.s.xy, FYK = left ? FYL : FYR;
+    vec3 YK = left ? WL.s.xyw : WR.s.xyw, FYK = left ? FYL : FYR;
     vec4 FK = left ? FL : FR, UK = left ? UL : UR;
     float kk = rK * (SK - uK) / (SK - Ss);
     vec4 Us = kk * vec4(1.0, Ss, vK, EK / rK + (Ss - uK) * (Ss + pK / (rK * (SK - uK))));
     vec4 Fc = FK + SK * (Us - UK);
-    vec2 FYc = FYK + SK * (kk * YK - rK * YK);
+    vec3 FYc = FYK + SK * (kk * YK - rK * YK);
     F = mix(Fc, Fhll, hllw);
     FY = mix(FYc, FYhll, hllw);
     uf = uK + SK * ((SK - uK) / (SK - Ss) - 1.0);
@@ -859,7 +910,7 @@ void main() {
 #if DIR_R
   F = vec4(F.x, F.z, F.y, F.w);       // rotate momentum back to (x, r)
 #endif
-  oF = F; oFY = vec4(FY, uf * Gf, uf);
+  oF = F; oFY = vec4(FY.xy, uf * Gf, uf); oFO = vec4(FY.z, 0.0, 0.0, 0.0);
 }
 `; }
 const FS_FLUX_X = makeFluxShader(false);
@@ -875,6 +926,8 @@ uniform sampler2D uA0;    // state at t^n (used in stage 2)
 uniform sampler2D uB0;
 uniform sampler2D uFxA; uniform sampler2D uFxB;
 uniform sampler2D uFrA; uniform sampler2D uFrB;
+uniform sampler2D uFxC; uniform sampler2D uFrC;   // oxidiser-vapour fluxes
+uniform float uInj;       // 1: B.w holds oxidiser vapour instead of the inflow-speed average
 uniform sampler2D uGeoA;  // (V, Am, Ax_west, Ar_south)
 uniform sampler2D uGeoG;  // group (V, Am, Wx, Wr)
 uniform sampler2D uGeoM;  // (host dx, host dy, slave mask, kappa)
@@ -889,7 +942,7 @@ layout(location = 0) out vec4 oA;
 layout(location = 1) out vec4 oB;
 
 // net flux (r-weighted areas) out of one member cell
-void memberFlux(ivec2 c, inout vec4 L, inout vec4 LY) {
+void memberFlux(ivec2 c, inout vec4 L, inout vec4 LY, inout float LO) {
   vec4 g = texelFetch(uGeoA, c, 0);
   float aw = abs(g.z), ae = abs(texelFetch(uGeoA, c + ivec2(1, 0), 0).z);
   float as_ = abs(g.w), an = abs(texelFetch(uGeoA, c + ivec2(0, 1), 0).w);
@@ -897,6 +950,10 @@ void memberFlux(ivec2 c, inout vec4 L, inout vec4 LY) {
   L  -= an * texelFetch(uFrA, c + ivec2(0, 1), 0) - as_ * texelFetch(uFrA, c, 0);
   LY -= ae * texelFetch(uFxB, c + ivec2(1, 0), 0) - aw * texelFetch(uFxB, c, 0);
   LY -= an * texelFetch(uFrB, c + ivec2(0, 1), 0) - as_ * texelFetch(uFrB, c, 0);
+  if (uInj > 0.5) {
+    LO -= ae * texelFetch(uFxC, c + ivec2(1, 0), 0).r - aw * texelFetch(uFxC, c, 0).r;
+    LO -= an * texelFetch(uFrC, c + ivec2(0, 1), 0).r - as_ * texelFetch(uFrC, c, 0).r;
+  }
 }
 // pressure on a slip wall from the reflected Riemann problem
 float wallPressure(Prim q, float un) {
@@ -916,12 +973,13 @@ void main() {
   vec4 B = texelFetch(uB, H, 0);
   Prim q = toPrim(A, B);
   vec4 L = vec4(0.0), LY = vec4(0.0);
-  memberFlux(H, L, LY);
+  float LO = 0.0;
+  memberFlux(H, L, LY, LO);
   int sm = int(round(texelFetch(uGeoM, H, 0).z));
-  if ((sm & 1) != 0) memberFlux(H + ivec2(-1, 0), L, LY);
-  if ((sm & 2) != 0) memberFlux(H + ivec2(1, 0), L, LY);
-  if ((sm & 4) != 0) memberFlux(H + ivec2(0, -1), L, LY);
-  if ((sm & 8) != 0) memberFlux(H + ivec2(0, 1), L, LY);
+  if ((sm & 1) != 0) memberFlux(H + ivec2(-1, 0), L, LY, LO);
+  if ((sm & 2) != 0) memberFlux(H + ivec2(1, 0), L, LY, LO);
+  if ((sm & 4) != 0) memberFlux(H + ivec2(0, -1), L, LY, LO);
+  if ((sm & 8) != 0) memberFlux(H + ivec2(0, 1), L, LY, LO);
   // embedded wall: pressure force along the (r-weighted) wall vector
   vec2 Wv = gg.zw;
   float wl = length(Wv);
@@ -933,7 +991,7 @@ void main() {
   L.z += q.w.w * gg.y;             // axisymmetric geometric source  p * Am
   float invV = 1.0 / max(gg.x, 1e-6);
   float dt = texelFetch(uStep, ivec2(0), 0).x;
-  vec4 LB = vec4(LY.xy, LY.z - q.s.z * LY.w, 0.0);   // G equation: dG/dt + div(uG) - G div(u) = 0
+  vec4 LB = vec4(LY.xy, LY.z - q.s.z * LY.w, LO);    // G equation: dG/dt + div(uG) - G div(u) = 0
   vec4 U, UY;
   if (uStage == 1) { U = A + dt * invV * L; UY = B + dt * invV * LB; }
   else {
@@ -952,7 +1010,8 @@ void main() {
   float Zn = clamp(UY.x, 0.0, rho);
   oA = vec4(rho, rho * vel, E);
   float ubar = 0.0;              // B.w, first column only: slow average of the inflow speed
-  if (ij.x == 0) {
+  if (uInj > 0.5) ubar = clamp(UY.w, 0.0, rho);
+  else if (ij.x == 0) {
     float u0 = texelFetch(uB, ij, 0).w;
     bool on = uStage == 2 && texelFetch(uStep, ivec2(0), 0).z > uBar.z;   // held until ignition has finished
     ubar = on ? min(u0 + min(dt * uBar.x, 1.0) * (vel.x - u0), uBar.y) : u0;
@@ -1043,12 +1102,15 @@ void main() {
 // ---------------------------------------------------------------------------
 const GLSL_GAS = `
 uniform vec4 uGas;        // (R_air, R_exhaust, T_REF, muK)
+uniform vec3 uRs;         // gas constants of fuel vapour, oxidiser vapour and products
 float sutherland(float TK) { return uGas.w * 1.458e-6 * TK * sqrt(TK) / (TK + 110.4); }
+float Rmix(vec4 s) { return (1.0 - s.x) * uGas.x + s.y * uRs.x + s.w * uRs.y + max(s.x - s.y - s.w, 0.0) * uRs.z; }
 `;
 const FS_VCELL = GLSL_COMMON + GLSL_GAS + `
 uniform sampler2D uW; uniform sampler2D uWb;
 uniform sampler2D uGeoM;   // .w = turbulence length scale (cells)
 uniform sampler2D uStep;
+uniform vec2 uChamberNu;   // (minimum eddy viscosity in the chamber, throat position in cells)
 layout(location = 0) out vec4 oT1;
 layout(location = 1) out vec4 oT2;
 void main() {
@@ -1069,13 +1131,16 @@ void main() {
   float om = vx - ur;
   float sens = om * om / (om * om + div * div + 1e-8);   // Ducros sensor: shocks are not turbulence
   float Smag = sqrt(max(S2, 0.0)) * sens;
-  vec3 sc = texelFetch(uWb, c, 0).xyz;
+  vec4 sc = texelFetch(uWb, c, 0);
   float rho = w0.x, p = w0.w;
-  float Rm = mix(uGas.x, uGas.y, sc.x);
+  float Rm = Rmix(sc);
   float mu = sutherland(p / (rho * Rm) * uGas.z);
   float l = texelFetch(uGeoM, ij, 0).w;
   float dt = texelFetch(uStep, ivec2(0), 0).x;
   float mut = rho * l * l * Smag;
+  // Combustion-chamber turbulence is 3-D and fed by the injector jets, which a 2-D grid can't
+  // sustain. It sets the mixing, so the chamber keeps a floor at the size Uc Rc / 100.
+  if (float(ij.x) < uChamberNu.y) mut = max(mut, rho * uChamberNu.x);
   oT1 = vec4(ux, ur, vx, vr);
   oT2 = vec4(min(mu + mut, 0.08 * rho / max(dt, 1e-9)), (sc.z + 1.0) * p / rho, Smag, mu);
 }
@@ -1087,10 +1152,11 @@ uniform sampler2D uW; uniform sampler2D uWb;
 uniform sampler2D uT1; uniform sampler2D uT2;
 layout(location = 0) out vec4 oF;
 layout(location = 1) out vec4 oFY;
+layout(location = 2) out vec4 oFO;
 const float PR_INV = 1.25;     // 1 / 0.8 (effective Prandtl and Schmidt numbers)
 void main() {
   ivec2 ij = ivec2(gl_FragCoord.xy);
-  oF = vec4(0.0); oFY = vec4(0.0);
+  oF = vec4(0.0); oFY = vec4(0.0); oFO = vec4(0.0);
   vec4 geo = texelFetch(uGeoA, ij, 0);
 #if DIR_R
   if (geo.w == 0.0 || ij.y == 0 || ij.y >= uN.y) return;
@@ -1103,7 +1169,7 @@ void main() {
   if (w1.x < 0.0 || w2.x < 0.0) return;
   vec4 t1 = texelFetch(uT1, k1, 0), t2 = texelFetch(uT1, ij, 0);
   vec4 m1 = texelFetch(uT2, k1, 0), m2 = texelFetch(uT2, ij, 0);
-  vec3 s1 = texelFetch(uWb, k1 + 2, 0).xyz, s2 = texelFetch(uWb, ij + 2, 0).xyz;
+  vec4 s1 = texelFetch(uWb, k1 + 2, 0), s2 = texelFetch(uWb, ij + 2, 0);
   float mu = 0.5 * (m1.x + m2.x);
   float uf = 0.5 * (w1.y + w2.y), vf = 0.5 * (w1.z + w2.z);
   vec4 tt = 0.5 * (t1 + t2);
@@ -1119,12 +1185,12 @@ void main() {
   float k = mu * PR_INV;
 #if DIR_R
   float trr = mu * (2.0 * vr - 0.6666667 * div);
-  oF = vec4(0.0, -txr, -trr, -(uf * txr + vf * trr) - k * (m2.y - m1.y));
+  oF = vec4(-k * (s2.w - s1.w), -txr, -trr, -(uf * txr + vf * trr) - k * (m2.y - m1.y));
 #else
   float txx = mu * (2.0 * ux - 0.6666667 * div);
-  oF = vec4(0.0, -txx, -txr, -(uf * txx + vf * txr) - k * (m2.y - m1.y));
+  oF = vec4(-k * (s2.w - s1.w), -txx, -txr, -(uf * txx + vf * txr) - k * (m2.y - m1.y));
 #endif
-  oFY = vec4(-k * (s2 - s1), 0.0);
+  oFY = vec4(-k * (s2.xyz - s1.xyz), 0.0);          // oF.x carries the oxidiser-vapour flux: viscosity moves no mass
 }
 `; }
 const FS_VFLUX_X = makeViscFluxShader(false);
@@ -1138,7 +1204,9 @@ uniform sampler2D uStep;
 uniform sampler2D uT1; uniform sampler2D uT2;
 uniform sampler2D uW;     // padded primitives, for the separation test
 uniform vec2 uPhys;       // (viscosity on, afterburning on)
-uniform vec4 uChem;       // (heat per unit exhaust, air per unit exhaust, kinetic rate constant, ambient pressure)
+uniform vec4 uChem;       // (heat per unit exhaust or fuel, air or oxidiser needed per unit, kinetic rate constant, ambient pressure)
+uniform vec2 uCap;        // temperature band over which burning stops (dissociation limit, K)
+uniform float uInj;
 uniform float uTw;        // wall temperature (normalised)
 uniform vec4 uAmbCons; uniform vec4 uAmbB; uniform vec2 uGamR;
 layout(location = 0) out vec4 oA;
@@ -1163,7 +1231,7 @@ void main() {
   vec2 vel = q.w.yz;
   float dt = texelFetch(uStep, ivec2(0), 0).x;
   float V = max(gg.x, 1e-6);
-  float Rm = mix(uGas.x, uGas.y, q.s.x), Tg = p / (rho * Rm);
+  float Rm = Rmix(q.s), Tg = p / (rho * Rm);
   vec4 L = vec4(0.0), LY = vec4(0.0);
   vec4 T1 = texelFetch(uT1, H, 0), T2 = texelFetch(uT2, H, 0);
   if (uPhys.x > 0.5) {
@@ -1220,17 +1288,25 @@ void main() {
     }
   }
   float invV = dt / V;
+  float dO = invV * L.x;     // viscous flux of oxidiser vapour travels in the mass slot
+  L.x = 0.0;
   vec4 U = A + invV * L;
   vec4 UY = B + invV * vec4(LY.xyz, 0.0) / vec4(1.0, 1.0, rho, 1.0);
+  if (uInj > 0.5) UY.w += dO;
   // afterburning: mixing-limited, with a finite-rate limit at low T or p
   if (uPhys.y > 0.5) {
-    float Z = q.s.x, F = q.s.y, s = uChem.y;
-    float avail = min(F, max(1.0 - Z - s * (Z - F), 0.0) / s);
+    float Z = q.s.x, F = q.s.y, O = q.s.w, s = uChem.y;
+    // injector mode: fuel vapour burns with oxidiser vapour first, then with the oxygen in air
+    float avail = uInj > 0.5 ? min(F, (O + 0.233 * max(1.0 - Z, 0.0)) / s)
+                             : min(F, max(1.0 - Z - s * (Z - F), 0.0) / s);
     if (avail > 1e-5) {
       float TK = Tg * uGas.z;
-      float kin = uChem.z * p * exp(-9000.0 / TK) * (1.0 - smoothstep(2400.0, 2800.0, TK));
-      float burn = avail * min(min(T2.z, kin) * dt, 0.5);
+      float kin = uChem.z * p * exp(-9000.0 / TK) * (1.0 - smoothstep(uCap.x, uCap.y, TK));
+      // mixing rate: resolved strain, or diffusion across the cell where strain is weak
+      float mixr = uInj > 0.5 ? max(T2.z, 4.0 * T2.x / rho) : T2.z;
+      float burn = avail * min(min(mixr, kin) * dt, 0.5);
       UY.y -= rho * burn;
+      if (uInj > 0.5) UY.w = max(UY.w - rho * burn * s, 0.0);
       U.w += rho * burn * uChem.x;
     }
   }
@@ -1240,7 +1316,7 @@ void main() {
   float Gn = clamp(UY.z, uGamR.x, uGamR.y);
   float Zn = clamp(UY.x, 0.0, rn);
   oA = vec4(rn, rn * vn, max(U.w, P_MIN * Gn + 0.5 * rn * dot(vn, vn)));
-  oB = vec4(Zn, clamp(UY.y, 0.0, Zn), Gn, texelFetch(uB, ij, 0).w);
+  oB = vec4(Zn, clamp(UY.y, 0.0, Zn), Gn, uInj > 0.5 ? clamp(UY.w, 0.0, rn) : texelFetch(uB, ij, 0).w);
 }
 `;
 // One row: the near-wall state of each column, for the separation read-out.
@@ -1346,9 +1422,9 @@ class GPUSolver {
     const T = (w, h) => { const t = this._tex(w, h, gl.RGBA32F, gl.RGBA, gl.FLOAT); this._texList.push(t); return t; };
     const F = (ts) => { const f = this._fbo(ts); this._fboList.push(f); return f; };
     this.S = [0, 1, 2].map(() => { const A = T(Nx, Nr), B = T(Nx, Nr); return { A, B, fbo: F([A, B]) }; });
-    this.flux = { FxA: T(Nx + 1, Nr + 1), FxB: T(Nx + 1, Nr + 1), FrA: T(Nx + 1, Nr + 1), FrB: T(Nx + 1, Nr + 1) };
-    this.flux.fboX = F([this.flux.FxA, this.flux.FxB]);
-    this.flux.fboR = F([this.flux.FrA, this.flux.FrB]);
+    this.flux = { FxA: T(Nx + 1, Nr + 1), FxB: T(Nx + 1, Nr + 1), FrA: T(Nx + 1, Nr + 1), FrB: T(Nx + 1, Nr + 1), FxC: T(Nx + 1, Nr + 1), FrC: T(Nx + 1, Nr + 1) };
+    this.flux.fboX = F([this.flux.FxA, this.flux.FxB, this.flux.FxC]);
+    this.flux.fboR = F([this.flux.FrA, this.flux.FrB, this.flux.FrC]);
     this.prim = { W: T(Nx + 4, Nr + 4), Wb: T(Nx + 4, Nr + 4) };
     this.prim.fbo = F([this.prim.W, this.prim.Wb]);
     this.vis = { T1: T(Nx, Nr), T2: T(Nx, Nr) };
@@ -1367,6 +1443,7 @@ class GPUSolver {
     this.geoA = T(Nx + 1, Nr + 1); this.geoG = T(Nx, Nr); this.geoM = T(Nx, Nr);
     this.cur = 0;
     this.readFbo = gl.createFramebuffer(); this._fboList.push(this.readFbo);
+    if (this.spray) this.spray.resize();
   }
 
   setMask(u8) {
@@ -1405,6 +1482,7 @@ class GPUSolver {
     const z = new Float32Array(4);
     for (const t of this.stepTex) { gl.bindTexture(gl.TEXTURE_2D, t); gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, 1, 1, gl.RGBA, gl.FLOAT, z); }
     this.cur = 0; this.stepIdx = 0; this.stepCount = 0;
+    if (this.spray) this.spray.reset();
   }
 
   _bindTex(prog, name, tex, unit) {
@@ -1459,6 +1537,11 @@ class GPUSolver {
         this._physicsPass(this.S[this.cur], stepTex, this.S[(this.cur + 1) % 3], P);
         this.cur = (this.cur + 1) % 3;
       }
+      if (P.inj && this.spray) {
+        this.spray.step(this.S[this.cur], stepTex, this.S[(this.cur + 1) % 3], P);
+        this.cur = (this.cur + 1) % 3;
+        gl.bindVertexArray(this.vao);
+      }
       this.stepCount++;
       gl.flush();          // keep GPU command batches small (avoids driver watchdog resets)
     }
@@ -1479,6 +1562,7 @@ class GPUSolver {
     gl.uniform1f(pp.u.uPambStart, P.pStart);
     gl.uniform1f(pp.u.uRamp, P.ramp);
     gl.uniform1f(pp.u.uRcCells, P.RcCells);
+    gl.uniform1f(pp.u.uInj, P.inj ? 1 : 0);
     this._draw(this.prim.fbo, this.Nx + 4, this.Nr + 4);
     for (const dirR of [false, true]) {
       const pr = dirR ? this.progFluxR : this.progFluxX;
@@ -1500,6 +1584,8 @@ class GPUSolver {
     this._bindTex(pr, 'uFrA', this.flux.FrA, 6); this._bindTex(pr, 'uFrB', this.flux.FrB, 7);
     this._bindTex(pr, 'uStep', stepTex, 8); this._bindTex(pr, 'uMask', this.mask, 9);
     this._bindTex(pr, 'uGeoA', this.geoA, 10); this._bindTex(pr, 'uGeoG', this.geoG, 11); this._bindTex(pr, 'uGeoM', this.geoM, 12);
+    this._bindTex(pr, 'uFxC', this.flux.FxC, 13); this._bindTex(pr, 'uFrC', this.flux.FrC, 14);
+    gl.uniform1f(pr.u.uInj, P.inj ? 1 : 0);
     gl.uniform1i(pr.u.uStage, stage);
     gl.uniform4fv(pr.u.uAmbCons, P.ambCons);
     gl.uniform4fv(pr.u.uAmbB, P.ambB);
@@ -1518,6 +1604,8 @@ class GPUSolver {
     this._bindTex(pr, 'uW', this.prim.W, 0); this._bindTex(pr, 'uWb', this.prim.Wb, 1);
     this._bindTex(pr, 'uGeoM', this.geoM, 2); this._bindTex(pr, 'uStep', stepTex, 3);
     gl.uniform4fv(pr.u.uGas, P.gas);
+    gl.uniform3fv(pr.u.uRs, P.Rs);
+    gl.uniform2fv(pr.u.uChamberNu, P.chamberNu);
     this._draw(this.vis.fbo, this.Nx, this.Nr);
     if (P.visc) {
       for (const dirR of [false, true]) {
@@ -1540,6 +1628,9 @@ class GPUSolver {
     this._bindTex(pr, 'uT1', this.vis.T1, 11); this._bindTex(pr, 'uT2', this.vis.T2, 12);
     this._bindTex(pr, 'uW', this.prim.W, 13);
     gl.uniform4fv(pr.u.uGas, P.gas);
+    gl.uniform3fv(pr.u.uRs, P.Rs);
+    gl.uniform2fv(pr.u.uCap, P.cap);
+    gl.uniform1f(pr.u.uInj, P.inj ? 1 : 0);
     gl.uniform2f(pr.u.uPhys, P.visc ? 1 : 0, P.chem ? 1 : 0);
     gl.uniform4fv(pr.u.uChem, P.chemK);
     gl.uniform1f(pr.u.uTw, P.Tw);
@@ -1644,6 +1735,329 @@ class GPUSolver {
 
 if (typeof module !== 'undefined') module.exports = { GPUSolver, GLSL_COMMON, VS_QUAD };
 
+// ===== spray.js =====
+// ============================================================================
+// spray.js — liquid propellant sprays on the GPU, coupled both ways to the gas.
+//
+// Parcels live in textures (one texel per parcel):
+//   PA = (x, r, u, v)              position in cells, velocity in U_REF
+//   PB = (drop diameter m, parcel mass, type 0 fuel / 1 oxidiser, impingement x)
+//   PC = (mass evaporated, x momentum, r momentum, 0)   given to the gas this step
+// Each step: new parcels overwrite the oldest ones (ring buffer), every parcel feels
+// drag (Schiller-Naumann), evaporates (d²-law with a Ranz-Marshall correction) and
+// breaks up (Weber number above 12 relaxes to the stable drop size). What parcels give
+// up is then drawn as points into a source texture, and one pass applies it to the gas.
+// Mass units: m_hat = m / (2 pi rho_ref dx^3), matching the solver's r-weighted volumes.
+// ============================================================================
+'use strict';
+
+const SPRAY_W = 256, SPRAY_H = 256, SPRAY_N = SPRAY_W * SPRAY_H;
+const SPRAY_PER_STEP = 4;      // parcels born each step, so the ring lasts ~16,000 steps
+
+const FS_SPRAY_UPDATE = GLSL_COMMON + `
+uniform sampler2D uPA; uniform sampler2D uPB;
+uniform sampler2D uW; uniform sampler2D uWb;
+uniform sampler2D uStep; uniform sampler2D uTab;
+uniform ivec3 uSpawn;     // (head, parcels per step, total)
+uniform uint uSeed;
+uniform float uMhat;      // total mass flow, normalised per grid time
+uniform vec4 uFuel; uniform vec4 uOx;   // (liquid density, boiling T, effective latent heat, surface tension)
+uniform vec2 uUnits;      // (seconds per grid time, unused)
+uniform vec4 uGas; uniform vec3 uRs;
+uniform float uFan;       // half-angle of the fan after impingement
+layout(location = 0) out vec4 oA;
+layout(location = 1) out vec4 oB;
+layout(location = 2) out vec4 oC;
+uint pcg(uint v) { uint s = v * 747796405u + 2891336453u; uint w = ((s >> ((s >> 28u) + 4u)) ^ s) * 277803737u; return (w >> 22u) ^ w; }
+float rnd(uint a, uint n) { return float(pcg(a + n * 7919u) & 0xffffffu) / 16777216.0; }
+bool wallAt(vec2 x) {
+  ivec2 c = ivec2(floor(x));
+  if (c.x < 0 || c.y < 0 || c.x >= uN.x || c.y >= uN.y) return false;
+  return texelFetch(uW, c + 2, 0).x < 0.0;
+}
+void main() {
+  ivec2 c = ivec2(gl_FragCoord.xy);
+  vec4 a = texelFetch(uPA, c, 0), b = texelFetch(uPB, c, 0);
+  int idx = c.x + c.y * ${SPRAY_W}, rel = idx - uSpawn.x;
+  if (rel < 0) rel += uSpawn.z;
+  float dt = texelFetch(uStep, ivec2(0), 0).x;
+  if (rel < uSpawn.y) {
+    // new parcel. Anything still liquid in the old one is handed to the gas, so no mass is lost.
+    uint id = uint(idx) ^ (uSeed * 2654435761u);
+    int t = int(rnd(id, 1u) * 255.999);
+    vec4 e1 = texelFetch(uTab, ivec2(t, 0), 0), e2 = texelFetch(uTab, ivec2(t, 1), 0), e3 = texelFetch(uTab, ivec2(t, 2), 0);
+    float ang = e1.z + (rnd(id, 2u) - 0.5) * 2.0 * e2.z;
+    float r = max(e1.y + (rnd(id, 3u) - 0.5) * e2.w, 0.05);
+    float d = e2.y * exp((rnd(id, 4u) - 0.5) * 1.4);
+    oA = vec4(e1.x, r, e1.w * cos(ang), e1.w * sin(ang));
+    oB = vec4(d, uMhat * dt / float(uSpawn.y), e2.x, e3.x);
+    oC = b.y > 0.0 ? vec4(b.y, b.y * a.zw, 0.0) : vec4(0.0);
+    return;
+  }
+  oA = a; oB = b; oC = vec4(0.0);
+  if (b.y <= 0.0) return;
+  ivec2 g = clamp(ivec2(floor(a.xy)), ivec2(0), uN - 1);
+  vec4 w = texelFetch(uW, g + 2, 0);
+  // born inside solid hardware (a baffle or post at the same radius): walk out into the flow
+  if (w.x < 0.0) { oA = vec4(a.x + 1.0, max(a.y - 0.5, 0.05), max(a.z, 0.0), a.w); return; }
+  vec4 pr = b.z < 0.5 ? uFuel : uOx;
+  vec2 v = a.zw;
+  float m = b.y, d = b.x, dts = dt * uUnits.x;
+  float dn = d, mn = m;
+  if (w.x > 0.0) {
+    vec4 s = texelFetch(uWb, g + 2, 0);
+    float rm = (1.0 - s.x) * uGas.x + s.y * uRs.x + s.w * uRs.y + max(s.x - s.y - s.w, 0.0) * uRs.z;
+    float T = w.w / (w.x * rm) * uGas.z;
+    float rhoG = w.x * 1.225, Urel = length(w.yz - v) * 287.6 + 1e-3;
+    float mu = 1.458e-6 * T * sqrt(T) / (T + 110.4);
+    float Re = rhoG * Urel * d / mu;
+    float invTau = 18.0 * mu * (1.0 + 0.15 * pow(min(Re, 1000.0), 0.687)) / (pr.x * d * d);
+    v = w.yz + (v - w.yz) * exp(-dts * invTau);
+    // evaporation: d²-law, heat-transfer driven (Spalding number B)
+    float cp = rm * 287.05 * (s.z + 1.0);
+    float B = max(cp * (T - pr.y), 0.0) / pr.z;
+    float K = 8.0 * (mu / 0.7) / pr.x * log(1.0 + B) * (1.0 + 0.27 * sqrt(Re));
+    float d2 = d * d - K * dts;
+    dn = d2 > 1e-12 ? sqrt(d2) : 0.0;
+    float f = dn / d;
+    mn = dn > 0.0 ? m * f * f * f : 0.0;
+    // secondary break-up: drops split towards the stable Weber number (mass is unchanged)
+    float we = rhoG * Urel * Urel * dn / pr.w;
+    if (we > 12.0 && dn > 0.0) {
+      float dst = 12.0 * pr.w / (rhoG * Urel * Urel);
+      float tb = 3.0 * dn / Urel * sqrt(pr.x / rhoG);
+      dn = mix(dn, max(dst, 2e-6), 1.0 - exp(-dts / tb));
+    }
+  }
+  float xi = b.w;
+  // impingement: the jets collide and shatter into a fine fan
+  if (xi > 0.0 && a.x >= xi) {
+    uint id = uint(idx) ^ (uSeed * 2654435761u);
+    float sp = length(v), phi = (rnd(id, 5u) - 0.5) * 2.0 * uFan;
+    v = sp * vec2(cos(phi), sin(phi));
+    dn *= 0.25; xi = 0.0;
+  }
+  vec2 x = a.xy + v * dt;
+  if (x.y < 0.0) { x.y = -x.y; v.y = -v.y; }
+  if (x.x < 0.0) { x.x = -x.x; v.x = abs(v.x) * 0.3; }
+  if (wallAt(x)) {                     // hits a wall: stays nearby as a slowed, film-like parcel
+    bool hx = wallAt(vec2(x.x, a.y)), hr = wallAt(vec2(a.x, x.y));
+    if (hx) { v.x *= -0.3; x.x = a.x; }
+    if (hr) { v.y *= -0.3; x.y = a.y; }
+    if (!hx && !hr) { x = a.xy; v *= -0.3; }
+  }
+  float dm = m - mn;
+  vec2 dp = mn * (a.zw - v) + dm * a.zw;
+  oC = vec4(dm, dp, 0.0);
+  if (x.x >= float(uN.x) || x.y >= float(uN.y) || mn <= 0.0) {
+    oA = vec4(-1.0, -1.0, 0.0, 0.0);
+    oB = vec4(0.0);
+    return;
+  }
+  oA = vec4(x, v);
+  oB = vec4(dn, mn, b.z, xi);
+}
+`;
+
+// what each parcel gave up this step, drawn as a point into the gas cell it started in
+const VS_SPRAY_DEP = `#version 300 es
+precision highp float; precision highp int; precision highp sampler2D;
+uniform sampler2D uPA; uniform sampler2D uPB; uniform sampler2D uPC;
+uniform sampler2D uGeoM;
+uniform ivec2 uN;
+out vec4 vS;
+void main() {
+  ivec2 t = ivec2(gl_VertexID % ${SPRAY_W}, gl_VertexID / ${SPRAY_W});
+  vec4 a = texelFetch(uPA, t, 0), c = texelFetch(uPC, t, 0);
+  gl_PointSize = 1.0;
+  vS = vec4(0.0);
+  if (a.x < 0.0 || (c.x == 0.0 && c.y == 0.0 && c.z == 0.0)) { gl_Position = vec4(2.0, 2.0, 0.0, 1.0); return; }
+  float type = texelFetch(uPB, t, 0).z;
+  ivec2 g = clamp(ivec2(floor(a.xy)), ivec2(0), uN - 1);
+  g += ivec2(round(texelFetch(uGeoM, g, 0).xy));
+  vS = vec4(c.x * (1.0 - type), c.x * type, c.y, c.z);
+  gl_Position = vec4((vec2(g) + 0.5) / vec2(uN) * 2.0 - 1.0, 0.0, 1.0);
+}
+`;
+const FS_SPRAY_DEP = `#version 300 es
+precision highp float;
+in vec4 vS;
+out vec4 o;
+void main() { o = vS; }
+`;
+const FS_SPRAY_APPLY = GLSL_COMMON + `
+uniform sampler2D uA; uniform sampler2D uB;
+uniform sampler2D uSrc;   // (fuel vapour, oxidiser vapour, x momentum, r momentum)
+uniform sampler2D uGeoG; uniform sampler2D uGeoM;
+uniform vec3 uE;          // (energy of fuel vapour, of oxidiser vapour, G of the engine gases)
+uniform vec4 uAmbCons; uniform vec4 uAmbB;
+layout(location = 0) out vec4 oA;
+layout(location = 1) out vec4 oB;
+void main() {
+  ivec2 ij = ivec2(gl_FragCoord.xy);
+  if (solidAt(ij)) { oA = uAmbCons; oB = uAmbB; return; }
+  ivec2 H = ij + ivec2(round(texelFetch(uGeoM, ij, 0).xy));
+  vec4 src = texelFetch(uSrc, H, 0);
+  vec4 A = texelFetch(uA, H, 0), B = texelFetch(uB, H, 0);
+  float invV = 1.0 / max(texelFetch(uGeoG, ij, 0).x, 1e-6);
+  float dm = src.x + src.y;
+  if (dm == 0.0 && src.z == 0.0 && src.w == 0.0) { oA = A; oB = B; return; }
+  vec2 vel = A.yz / max(A.x, RHO_MIN);
+  float rn = A.x + dm * invV;
+  vec2 mom = A.yz + src.zw * invV;
+  float E = A.w + (src.x * uE.x + src.y * uE.y + dot(vel, src.zw)) * invV;
+  float phi = min(dm * invV / rn, 1.0);
+  float Gn = mix(B.z, uE.z, phi);
+  vec2 vn = mom / rn;
+  // evaporation may not take the gas below a small positive internal energy
+  E = max(E, 0.02 * A.w + 0.5 * rn * dot(vn, vn) + P_MIN * Gn);
+  oA = vec4(rn, mom, E);
+  oB = vec4(B.x + dm * invV, B.y + src.x * invV, Gn, B.w + src.y * invV);
+}
+`;
+// droplets drawn over the flow field
+const VS_SPRAY_DRAW = `#version 300 es
+precision highp float; precision highp int; precision highp sampler2D;
+uniform sampler2D uPA; uniform sampler2D uPB;
+uniform vec4 uView;
+uniform float uDrop;       // pixels per metre of drop diameter (exaggerated)
+uniform float uPx;
+out vec4 vC;
+void main() {
+  int n = ${SPRAY_N};
+  float sgn = gl_VertexID < n ? 1.0 : -1.0;
+  int id = gl_VertexID < n ? gl_VertexID : gl_VertexID - n;
+  ivec2 t = ivec2(id % ${SPRAY_W}, id / ${SPRAY_W});
+  vec4 a = texelFetch(uPA, t, 0), b = texelFetch(uPB, t, 0);
+  if (a.x < 0.0 || b.y <= 0.0) { gl_Position = vec4(2.0, 2.0, 0.0, 1.0); gl_PointSize = 1.0; vC = vec4(0.0); return; }
+  vec2 uv = vec2((a.x - uView.x) / uView.z, (sgn * a.y - uView.y) / uView.w);
+  gl_Position = vec4(uv * 2.0 - 1.0, 0.0, 1.0);
+  gl_PointSize = clamp(b.x * uDrop, 1.2, 6.0) * uPx;
+  vC = b.z < 0.5 ? vec4(1.0, 0.62, 0.15, 0.9) : vec4(0.35, 0.85, 1.0, 0.9);
+}
+`;
+const FS_SPRAY_DRAW = `#version 300 es
+precision highp float;
+in vec4 vC;
+out vec4 o;
+void main() {
+  float m = 1.0 - smoothstep(0.25, 0.5, length(gl_PointCoord - 0.5));
+  o = vec4(vC.rgb * m * vC.a, m * vC.a);
+}
+`;
+
+class GPUSpray {
+  constructor(solver) {
+    this.s = solver;
+    const gl = solver.gl;
+    this.blendOk = !!gl.getExtension('EXT_float_blend');
+    this.progUpdate = solver._program(VS_QUAD, FS_SPRAY_UPDATE);
+    this.progDep = solver._program(VS_SPRAY_DEP, FS_SPRAY_DEP);
+    this.progApply = solver._program(VS_QUAD, FS_SPRAY_APPLY);
+    this.progDraw = solver._program(VS_SPRAY_DRAW, FS_SPRAY_DRAW);
+    this.emptyVao = gl.createVertexArray();
+    this.head = 0; this.seed = 1;
+    this.ready = false;
+  }
+  resize() {
+    const s = this.s, gl = s.gl;
+    const T = (w, h) => { const t = s._tex(w, h, gl.RGBA32F, gl.RGBA, gl.FLOAT); s._texList.push(t); return t; };
+    const F = (ts) => { const f = s._fbo(ts); s._fboList.push(f); return f; };
+    this.P = [0, 1].map(() => { const A = T(SPRAY_W, SPRAY_H), B = T(SPRAY_W, SPRAY_H), C = T(SPRAY_W, SPRAY_H); return { A, B, C, fbo: F([A, B, C]) }; });
+    this.src = T(s.Nx, s.Nr);
+    this.srcFbo = F([this.src]);
+    this.tab = T(256, 3);
+    this.cur = 0;
+    this.ready = true;
+    this.reset();
+  }
+  setInjector(inj) {
+    if (!inj || !this.ready) return;
+    const gl = this.s.gl;
+    gl.bindTexture(gl.TEXTURE_2D, this.tab);
+    gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, 256, 3, gl.RGBA, gl.FLOAT, inj.tab);
+  }
+  reset() {
+    if (!this.ready) return;
+    const gl = this.s.gl;
+    const dead = new Float32Array(SPRAY_N * 4);
+    for (let k = 0; k < SPRAY_N; k++) { dead[k * 4] = -1; dead[k * 4 + 1] = -1; }
+    const zero = new Float32Array(SPRAY_N * 4);
+    for (const p of this.P) {
+      gl.bindTexture(gl.TEXTURE_2D, p.A); gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, SPRAY_W, SPRAY_H, gl.RGBA, gl.FLOAT, dead);
+      gl.bindTexture(gl.TEXTURE_2D, p.B); gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, SPRAY_W, SPRAY_H, gl.RGBA, gl.FLOAT, zero);
+      gl.bindTexture(gl.TEXTURE_2D, p.C); gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, SPRAY_W, SPRAY_H, gl.RGBA, gl.FLOAT, zero);
+    }
+    this.head = 0;
+  }
+  // S: gas state now, out: where the updated gas state goes
+  step(S, stepTex, out, P) {
+    const s = this.s, gl = s.gl, d = P.injData;
+    const from = this.P[this.cur], to = this.P[1 - this.cur];
+    // ---- parcels
+    let pr = this.progUpdate;
+    s._common(pr, P);
+    s._bindTex(pr, 'uPA', from.A, 0); s._bindTex(pr, 'uPB', from.B, 1);
+    s._bindTex(pr, 'uW', s.prim.W, 2); s._bindTex(pr, 'uWb', s.prim.Wb, 3);
+    s._bindTex(pr, 'uStep', stepTex, 4); s._bindTex(pr, 'uTab', this.tab, 5); s._bindTex(pr, 'uMask', s.mask, 6);
+    gl.uniform3i(pr.u.uSpawn, this.head, SPRAY_PER_STEP, SPRAY_N);
+    gl.uniform1ui(pr.u.uSeed, this.seed);
+    gl.uniform1f(pr.u.uMhat, P.spray.mhat);
+    gl.uniform4fv(pr.u.uFuel, d.fuelVec); gl.uniform4fv(pr.u.uOx, d.oxVec);
+    gl.uniform2f(pr.u.uUnits, P.spray.tScale, 0);
+    gl.uniform4fv(pr.u.uGas, P.gas); gl.uniform3fv(pr.u.uRs, P.Rs);
+    gl.uniform1f(pr.u.uFan, 25 * Math.PI / 180);
+    s._draw(to.fbo, SPRAY_W, SPRAY_H);
+    // ---- deposit
+    gl.bindFramebuffer(gl.FRAMEBUFFER, this.srcFbo);
+    gl.viewport(0, 0, s.Nx, s.Nr);
+    gl.clearColor(0, 0, 0, 0); gl.clear(gl.COLOR_BUFFER_BIT);
+    pr = this.progDep;
+    gl.useProgram(pr.p);
+    gl.bindVertexArray(this.emptyVao);
+    gl.uniform2i(pr.u.uN, s.Nx, s.Nr);
+    s._bindTex(pr, 'uPA', from.A, 0); s._bindTex(pr, 'uPB', from.B, 1); s._bindTex(pr, 'uPC', to.C, 2); s._bindTex(pr, 'uGeoM', s.geoM, 3);
+    gl.enable(gl.BLEND); gl.blendFunc(gl.ONE, gl.ONE);
+    gl.drawArrays(gl.POINTS, 0, SPRAY_N);
+    gl.disable(gl.BLEND);
+    gl.bindVertexArray(s.vao);
+    // ---- gas sources
+    pr = this.progApply;
+    s._common(pr, P);
+    s._bindTex(pr, 'uA', S.A, 0); s._bindTex(pr, 'uB', S.B, 1); s._bindTex(pr, 'uSrc', this.src, 2);
+    s._bindTex(pr, 'uGeoG', s.geoG, 3); s._bindTex(pr, 'uGeoM', s.geoM, 4); s._bindTex(pr, 'uMask', s.mask, 5);
+    gl.uniform3f(pr.u.uE, d.eF, d.eO, d.Ge);
+    gl.uniform4fv(pr.u.uAmbCons, P.ambCons); gl.uniform4fv(pr.u.uAmbB, P.ambB);
+    s._draw(out.fbo, s.Nx, s.Nr);
+    this.cur = 1 - this.cur;
+    this.head = (this.head + SPRAY_PER_STEP) % SPRAY_N;
+    this.seed = (this.seed + 1) >>> 0;
+  }
+  // overlay of liquid drops onto the current framebuffer
+  draw(view, mirror, dropScale, px) {
+    const s = this.s, gl = s.gl, pr = this.progDraw;
+    gl.useProgram(pr.p);
+    gl.bindVertexArray(this.emptyVao);
+    s._bindTex(pr, 'uPA', this.P[this.cur].A, 0); s._bindTex(pr, 'uPB', this.P[this.cur].B, 1);
+    gl.uniform4fv(pr.u.uView, view);
+    gl.uniform1f(pr.u.uDrop, dropScale);
+    gl.uniform1f(pr.u.uPx, px);
+    gl.enable(gl.BLEND); gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
+    gl.drawArrays(gl.POINTS, 0, mirror ? 2 * SPRAY_N : SPRAY_N);
+    gl.disable(gl.BLEND);
+  }
+  // liquid still in the chamber, by type: { fuel, ox, parcels, meanD } (synchronous; for tests and occasional read-outs)
+  stats(P) {
+    const s = this.s, b = s._readRect(this.P[this.cur].B, 0, 0, SPRAY_W, SPRAY_H);
+    let f = 0, o = 0, n = 0, dS = 0;
+    for (let k = 0; k < SPRAY_N; k++) {
+      const m = b[k * 4 + 1];
+      if (m > 0) { n++; dS += b[k * 4]; if (b[k * 4 + 2] < 0.5) f += m; else o += m; }
+    }
+    return { fuel: f, ox: o, parcels: n, meanD: n ? dS / n : 0 };
+  }
+}
+
 // ===== simsetup.js =====
 // ============================================================================
 // simsetup.js — turns user-facing engine parameters into a grid, wall mask,
@@ -1657,7 +2071,10 @@ function buildSimSetup(cfg) {
   //           minCells, viscous, afterburn, qAb, sAir, Tw, inletAbsorb
   const Nx = cfg.Nx;
   const Nr = Math.max(16, Math.round(Nx * cfg.aspect));
-  const contour = buildContour(cfg);
+  const injOn = injectorActive(cfg);
+  const contour = chamberHardwareContour(buildContour(cfg), cfg, injOn);
+  // the injector-resolved chamber needs fine cells, so the domain closes around the engine
+  if (injOn && !cfg.dx) cfg = { ...cfg, domainL: Math.max(1.3 * contour.xe, 1.25 * (contour.Re + Math.max(contour.Rc, contour.Re) * 0.12) / cfg.aspect) };
   // Snap the cell size so the throat radius is a whole number of cells: the
   // stepped wall then reproduces the true throat area (and hence mass flow).
   // Keep at least minCells across the throat radius by shortening the domain,
@@ -1686,7 +2103,8 @@ function buildSimSetup(cfg) {
     const x = (i + 0.5) * dx;
     RinCol[i] = x <= contour.xe ? contour.radiusAt(x) : Infinity;
   }
-  const geo = buildCutGeometry({ Nx, Nr, dx, contour, tw, base: cfg.base, xBase, bodyR, mode: cfg.wallModel || 'cut' });
+  const hw = injOn ? chamberSolids(cfg, contour, dx) : [];
+  const geo = buildCutGeometry({ Nx, Nr, dx, contour, tw, base: cfg.base, xBase, bodyR, mode: cfg.wallModel || 'cut', solids: hw });
   const mask = geo.mask;
   // Turbulence length scale (cells), stored in geoM.w: the Smagorinsky scale in
   // open flow; inside the engine a mixing length min(kappa d, 0.09 delta), where
@@ -1721,7 +2139,10 @@ function buildSimSetup(cfg) {
       for (let i = 0; i < Nx; i++) {
         const x = (i + 0.5) * dx, k = (j * Nx + i) * 4;
         const inNozzle = x <= contour.xe && r < RinCol[i];
-        if (cfg.startMode === 'burst' && inNozzle && x < contour.xt) {
+        if (injOn && inNozzle && x < contour.xt) {
+          // chamber already burning (igniter): hot products at chamber pressure
+          A[k] = rho0; A[k + 1] = 0; A[k + 2] = 0; A[k + 3] = E0; B[k] = rho0; B[k + 1] = rho0 * P.injData.Fres; B[k + 2] = Ge;
+        } else if (cfg.startMode === 'burst' && inNozzle && x < contour.xt) {
           A[k] = rho0; A[k + 1] = 0; A[k + 2] = 0; A[k + 3] = E0; B[k] = rho0; B[k + 1] = rho0; B[k + 2] = Ge;
         } else if (inNozzle) {
           A[k] = rhoa; A[k + 1] = 0; A[k + 2] = 0; A[k + 3] = pa * Ga; B[k + 2] = Ga;
@@ -1730,7 +2151,7 @@ function buildSimSetup(cfg) {
         }
       }
     }
-    for (let j = 0; j < Nr; j++) B[j * Nx * 4 + 3] = P.uInlet0;
+    if (!injOn) for (let j = 0; j < Nr; j++) B[j * Nx * 4 + 3] = P.uInlet0;
     // merged sliver cells carry their host's state
     for (let k = 0; k < Nx * Nr; k++) {
       const q = k * 4, hx = geo.geoM[q], hy = geo.geoM[q + 1];
@@ -1744,7 +2165,9 @@ function buildSimSetup(cfg) {
   const iExit = Math.max(1, Math.min(Nx - 1, Math.floor(contour.xe / dx) - 1));
   let jExit = 0;
   while (jExit < Nr && !mask[jExit * Nx + iExit]) jExit++;
-  const iChamber = Math.max(1, Math.floor(0.5 * contour.Lc / dx));
+  // chamber probe, kept clear of a pintle post on the axis
+  let iChamber = Math.max(1, Math.floor(0.5 * contour.Lc / dx));
+  for (const s of hw) if (s.r0 <= 0) iChamber = Math.max(iChamber, Math.ceil(s.x1 / dx) + 2);
   const iThroat = Math.floor(contour.xt / dx);
   // near-wall row per column (first full fluid layer under the nozzle wall)
   const jWall = new Float32Array(Nx * 4);
@@ -1757,6 +2180,7 @@ function buildSimSetup(cfg) {
 
   return {
     cfg, Nx, Nr, dx, tw, bodyR, xBase, contour, atm, theory, mask, geo, P, initialState,
+    solids: hw, injector: injOn ? buildInjectorTable(cfg, contour, dx, P) : null,
     iExit, jExit, iChamber, iThroat, tScale,
     resolution: { throatCells: contour.Rt / dx, exitCells: contour.Re / dx, gridLimited, shortened: !cfg.dx && Nx * dx < 0.98 * cfg.domainL },
   };
@@ -1764,6 +2188,127 @@ function buildSimSetup(cfg) {
 
 // 1-D estimate of the inflow speed for the contraction ratio (normalised): the start
 // value of the slow average, which then adapts to whatever the throat really passes.
+// ---------------------------------------------------------------------------
+// Injector-resolved chamber
+// ---------------------------------------------------------------------------
+function injectorActive(cfg) {
+  return !!(cfg.injMode && cfg.prop && PROPELLANTS[cfg.prop] && PROPELLANTS[cfg.prop].spray);
+}
+// Single global reaction, fuel + s oxidiser -> products. Its heat is set so that burning
+// at the design mixture ratio reaches the propellant's chamber temperature exactly.
+function injectorThermo(cfg, ReN, Ge) {
+  const sp = PROPELLANTS[cfg.prop].spray, f = SPRAY_FLUIDS[sp.fuel], o = SPRAY_FLUIDS[sp.ox];
+  const Rn = (Mw) => (RU / Mw) / R_REF;
+  const Rf = Rn(f.Mw), Ro = Rn(o.Mw);
+  const Leff = (x) => x.L + x.cl * (x.Tb - x.Tinj);
+  const eF = Rf * Ge * f.Tb / T_REF - Leff(f) / (U_REF * U_REF);
+  const eO = Ro * Ge * o.Tb / T_REF - Leff(o) / (U_REF * U_REF);
+  const Yo = sp.OF / (1 + sp.OF), Yf = 1 - Yo;
+  const burnt = Math.min(Yf, Yo / sp.s), Fres = Yf - burnt;
+  const Rp = (ReN - Fres * Rf) / Math.max(1 - Fres, 1e-3);
+  // The gas leaves carrying enthalpy, not just internal energy, so the budget is on enthalpy:
+  // energy added inside the chamber must equal cp Tc at the throat's upstream state.
+  const qHat = (ReN * (Ge + 1) * cfg.Tc / T_REF - (Yf * eF + Yo * eO)) / burnt;
+  return { Rf, Ro, Rp, eF, eO, Fres, qHat, s: sp.s, fuel: f, ox: o, Ge,
+    fuelVec: [f.rho, f.Tb, Leff(f), f.sigma], oxVec: [o.rho, o.Tb, Leff(o), o.sigma] };
+}
+// Acoustic cavity: an annular pocket in the chamber wall next to the injector face.
+function chamberHardwareContour(c, cfg, on) {
+  if (!on || !(cfg.cavD > 0)) return c;
+  const w = (cfg.cavW || 0) / 100 * c.Rc, d = cfg.cavD / 100 * c.Rc, base = c.radiusAt;
+  return { ...c, radiusAt: (x) => base(x) + (x < w ? d : 0) };
+}
+// Pintle post and ring baffles, snapped to whole cells.
+function chamberSolids(cfg, c, dx) {
+  const out = [], snap = (v) => Math.round(v / dx) * dx;
+  if (cfg.injType === 'pintle') out.push({ x0: -dx, x1: snap(0.5 * c.Rc), r0: -dx, r1: snap(0.22 * c.Rc) });
+  const n = Math.round(cfg.baffles || 0), h = snap((cfg.baffleH || 0) / 100 * c.Rc), t = Math.max(2 * dx, snap(0.04 * c.Rc));
+  for (let k = 1; k <= n && h > 0; k++) {
+    const r = snap(k / (n + 1) * c.Rc);
+    out.push({ x0: -dx, x1: h, r0: r - t / 2, r1: r + t / 2 });
+  }
+  // back wall of an acoustic cavity, so the pocket stays sealed from the outside air
+  if (cfg.cavD > 0) {
+    const w = snap((cfg.cavW || 0) / 100 * c.Rc), d = (cfg.cavD / 100) * c.Rc;
+    out.push({ x0: w, x1: w + Math.max(3 * dx, 0.12 * c.Rt), r0: c.Rc, r1: c.Rc + d + Math.max(3 * dx, 0.12 * c.Rt) });
+  }
+  return out;
+}
+// Starting drop sizes are primary-atomisation estimates, a small fraction of the orifice size:
+// a liquid jet breaks up within a few diameters, far too fast and fine to resolve on this grid.
+// Weighted table of spray elements, sampled by every new parcel: three rows of 256 texels,
+// (x0, r0, angle, speed) in cells and U_REF; (type, drop size in m, cone half-angle, width in cells);
+// (impingement x in cells, 0, 0, 0). Type 0 = fuel, 1 = oxidiser.
+function buildInjectorTable(cfg, c, dx, P) {
+  const d = P.injData, Pc = cfg.Pc, dp = (cfg.injDP || 20) / 100 * Pc;
+  const OF = cfg.OF > 0 ? cfg.OF : PROPELLANTS[cfg.prop].spray.OF;
+  const Vf = 0.8 * Math.sqrt(2 * dp / d.fuel.rho) / U_REF, Vo = 0.8 * Math.sqrt(2 * dp / d.ox.rho) / U_REF;
+  const Do = (cfg.injD || 1.5) * 1e-3, n = Math.max(1, Math.round(cfg.injRings || 4));
+  const mf = 1 / (1 + OF), mo = OF / (1 + OF), film = Math.min((cfg.film || 0) / 100, 0.5);
+  const Ri = 0.9 * c.Rc, deg = Math.PI / 180, C = 1 / dx;
+  const el = [];
+  const add = (type, weight, x, r, angle, speed, drop, cone, width, xi = 0) => el.push({ type, weight, x: x * C, r: r * C, angle, speed, drop, cone, width: width * C, xi: xi * C });
+  const x0 = 0.5 * dx;
+  const ringR = (k, m) => (k + 0.5) / m * Ri;
+  const shareOf = (rs) => { const s = rs.reduce((a, b) => a + b, 0) || 1; return rs.map((r) => r / s); };
+  if (cfg.injType === 'coax') {
+    const rs = Array.from({ length: n }, (_, k) => ringR(k, n)), w = shareOf(rs), g = 1.2 * Do;
+    rs.forEach((r, k) => {
+      add(1, mo * w[k], x0, r, 0, Vo, 0.035 * Do, 3 * deg, 0.5 * Do);
+      add(0, 0.5 * mf * (1 - film) * w[k], x0, r + g, 0, 3 * Vf, 0.015 * Do, 8 * deg, 0.4 * Do);
+      add(0, 0.5 * mf * (1 - film) * w[k], x0, Math.max(r - g, 0.2 * Do), 0, 3 * Vf, 0.015 * Do, 8 * deg, 0.4 * Do);
+    });
+  } else if (cfg.injType === 'impinge') {
+    const th = (cfg.injAngle || 30) * deg, xi = 6 * Do, del = xi * Math.tan(th);
+    const rs = Array.from({ length: n }, (_, k) => Math.max(ringR(k, n), del + Do)), w = shareOf(rs);
+    rs.forEach((r, k) => {
+      add(0, mf * (1 - film) * w[k], x0, r + del, -th, Vf, 0.12 * Do, 1 * deg, 0.5 * Do, xi);
+      add(1, mo * w[k], x0, r - del, th, Vo, 0.12 * Do, 1 * deg, 0.5 * Do, xi);
+    });
+  } else if (cfg.injType === 'pintle') {
+    const Rp = 0.22 * c.Rc, Lp = 0.5 * c.Rc, th = Math.atan(Math.sqrt(Math.max(cfg.injTMR || 1, 0.01)));
+    const xt = Lp + 1.5 * dx;
+    add(1, mo, xt, Rp, th, Vo, 0.04 * Do, 6 * deg, 0.6 * Do);
+    add(0, mf * (1 - film), xt, Rp + Do, th, Vf, 0.04 * Do, 6 * deg, 0.6 * Do);
+  } else {                                     // showerhead: alternating rings of axial jets
+    const m = Math.max(2, n), rs = Array.from({ length: m }, (_, k) => ringR(k, m));
+    const f = shareOf(rs.filter((_, k) => k % 2 === 0)), o = shareOf(rs.filter((_, k) => k % 2 === 1));
+    let a = 0, b = 0;
+    rs.forEach((r, k) => {
+      if (k % 2 === 0) add(0, mf * (1 - film) * f[a++], x0, r, 0, Vf, 0.03 * Do, 4 * deg, 0.6 * Do);
+      else add(1, mo * o[b++], x0, r, 0, Vo, 0.03 * Do, 4 * deg, 0.6 * Do);
+    });
+  }
+  if (film > 0) add(0, mf * film, x0, 0.97 * c.Rc, 2 * deg, 0.5 * Vf, 80e-6, 1 * deg, 0.015 * c.Rc);
+  // fill the table in proportion to mass (largest remainder), so equal-mass parcels give each element its share
+  const total = el.reduce((s, e) => s + e.weight, 0), N = 256;
+  const slots = el.map((e) => ({ e, q: e.weight / total * N }));
+  slots.forEach((s) => { s.n = Math.floor(s.q); });
+  let used = slots.reduce((t, s) => t + s.n, 0);
+  slots.slice().sort((a, b) => (b.q - b.n) - (a.q - a.n)).forEach((s) => { if (used < N) { s.n++; used++; } });
+  const tab = new Float32Array(N * 3 * 4);
+  let t = 0;
+  for (const s of slots) for (let q = 0; q < s.n; q++, t++) {
+    const e = s.e;
+    tab.set([e.x, e.r, e.angle, e.speed], t * 4);
+    tab.set([e.type, e.drop, e.cone, e.width], (N + t) * 4);
+    tab.set([e.xi, 0, 0, 0], (2 * N + t) * 4);
+  }
+  return { tab, elements: el, OF };
+}
+// c* quality read from the throat plane: how much oxidiser and fuel vapour, by mass flow, is left unburnt.
+function chamberPerformance(setup, col) {
+  const { dx, geo, iThroat, P } = setup;
+  let m = 0, mO = 0, mF = 0;
+  for (let j = 0; j < setup.Nr; j++) {
+    if (setup.mask[j * setup.Nx + iThroat]) break;
+    const k = j * 4, rho = Math.max(col.A[k], 1e-9), u = col.A[k + 1] / rho;
+    const dA = 2 * Math.PI * Math.abs(geo.Ax[j * geo.W1 + iThroat]) * dx * dx;
+    m += rho * u * dA; mO += col.B[k + 3] * u * dA; mF += col.B[k + 1] * u * dA;
+  }
+  const f = RHO_REF * U_REF, target = P.spray ? P.spray.mdot : 1;
+  return { mdot: m * f, unburntOx: mO * f / Math.max(target, 1e-9), fuelVapour: mF * f / Math.max(target, 1e-9) };
+}
 function chamberInflowSpeed(cfg, c0) {
   const M = machFromAreaRatio(Math.max(cfg.CR, 1.05), cfg.gamma, false);
   return M * c0 / Math.sqrt(1 + 0.5 * (cfg.gamma - 1) * M * M);
@@ -1783,8 +2328,21 @@ function computeParams(cfg, contour, dx, PcSi, pStartSi) {
   const c0 = Math.sqrt(g * ReN * TcN);
   const uLim = Math.sqrt(2 * g / (g - 1) * ReN * TcN);
   const tScale = dx / U_REF;
-  const chem = cfg.afterburn !== false && (cfg.qAb || 0) > 0;
+  const injOn = injectorActive(cfg);
+  const injData = injOn ? injectorThermo(cfg, ReN, Ge) : null;
+  const chem = injOn || (cfg.afterburn !== false && (cfg.qAb || 0) > 0);
+  const PcTheory = injOn ? nozzleTheory({ Pc: PcSi, Tc: cfg.Tc, gamma: g, Mw: cfg.Mw, Dt: cfg.Dt, De: cfg.De, pa: atm.p }) : null;
   return {
+    inj: injOn,
+    injData,
+    Rs: injOn ? [injData.Rf, injData.Ro, injData.Rp] : [ReN, ReN, ReN],
+    chamberNu: injOn ? [0.01 * chamberInflowSpeed(cfg, c0) * contour.Rc / dx, contour.xt / dx] : [0, 0],
+    cap: injOn ? [1.02 * cfg.Tc, 1.25 * cfg.Tc] : [2400, 2800],
+    spray: injOn ? {
+      mhat: PcTheory.mdot / (2 * Math.PI * RHO_REF * U_REF * dx * dx),
+      mdot: PcTheory.mdot,
+      tScale: dx / U_REF, dx,
+    } : null,
     gamma: g,
     amb: [rhoa, uinf, 0, pa],
     ambCons: [rhoa, rhoa * uinf, 0, pa * Ga + 0.5 * rhoa * uinf * uinf],
@@ -1796,12 +2354,13 @@ function computeParams(cfg, contour, dx, PcSi, pStartSi) {
     visc: cfg.viscous !== false,
     chem,
     gas: [1.0, ReN, T_REF, U_REF / (dx * P_REF)],
-    chemK: [(cfg.qAb || 0) * 1e6 / (U_REF * U_REF), Math.max(cfg.sAir || 1, 0.05), (dx / U_REF) / CHEM_TAU0, pa],
+    chemK: injOn ? [injData.qHat, injData.s, (dx / U_REF) / CHEM_TAU0, pa]
+                 : [(cfg.qAb || 0) * 1e6 / (U_REF * U_REF), Math.max(cfg.sAir || 1, 0.05), (dx / U_REF) / CHEM_TAU0, pa],
     Tw: Math.min(cfg.Tw || 800, Math.max(cfg.Tc, 1)) / T_REF,
     res: [PcN, TcN, ReN],
     pStart: Math.min(pStartSi / P_REF, PcN),
     ramp: cfg.startMode === 'burst' ? 0 : (cfg.rampMs * 1e-3) / tScale,
-    RcCells: contour.Rc / dx,
+    RcCells: (contour.Rc + (injOn ? (cfg.cavD || 0) / 100 * contour.Rc : 0)) / dx + 0.5,
     cfl: cfg.cfl || 0.6,
     dtMax: 10.0,
     wFloor: 2.0 * c0 + Math.abs(uinf),
@@ -1842,7 +2401,8 @@ function cellPrimSI(setup, a, b) {
   const rho = Math.max(a[0], 1e-9), u = a[1] / rho, v = a[2] / rho;
   const p = Math.max((a[3] - 0.5 * rho * (u * u + v * v)) / G, 1e-9);
   const Y = Math.min(Math.max(b[0] / rho, 0), 1);
-  const Rmix = Y * setup.P.ReN + (1 - Y) * setup.P.RaN;
+  const R = setup.P.Rs, Fv = Math.max(b[1] / rho, 0), Ov = setup.P.inj ? Math.max(b[3] / rho, 0) : 0;
+  const Rmix = (1 - Y) * setup.P.RaN + Fv * R[0] + Ov * R[1] + Math.max(Y - Fv - Ov, 0) * R[2];
   const T = p / (rho * Rmix) * T_REF;
   const c = Math.sqrt(g * p / rho);
   return { rho: rho * RHO_REF, u: u * U_REF, v: v * U_REF, p: p * P_REF, T, Y, M: Math.hypot(u, v) / c };
@@ -1905,6 +2465,9 @@ const FIELDS = [
   { id: 'flame',  label: 'Flame (visual)',   unit: '' },
   { id: 'turb',   label: 'Eddy viscosity',   unit: '' },
   { id: 'burn',   label: 'Afterburn',        unit: '' },
+  { id: 'fuel',   label: 'Fuel vapour',      unit: '' },
+  { id: 'ox',     label: 'Oxidiser vapour',  unit: '' },
+  { id: 'heat',   label: 'Heat release',     unit: '' },
 ];
 
 const COLORMAPS = {
@@ -1947,6 +2510,8 @@ uniform sampler2D uA; uniform sampler2D uB;
 uniform int uField;
 uniform vec2 uRange;          // display range (after log, if any)
 uniform float uReN, uRaN;     // normalised gas constants
+uniform vec3 uRs;             // fuel vapour, oxidiser vapour, products
+uniform vec4 uChemV;          // (unused, oxidiser per unit fuel, kinetic constant, unused)
 uniform vec4 uTscale;         // (T_REF, Tc_K, Ta_K, unused)
 uniform float uSchlGain;
 uniform float uVelScale;      // U_REF
@@ -1971,7 +2536,7 @@ void main() {
   float c = soundSpeed(q);
   float spd = length(q.w.yz);
   float M = spd / c;
-  float Rm = mix(uRaN, uReN, q.s.x);
+  float Rm = (1.0 - q.s.x) * uRaN + q.s.y * uRs.x + q.s.w * uRs.y + max(q.s.x - q.s.y - q.s.w, 0.0) * uRs.z;
   float T = p / (rho * Rm) * uTscale.x;
   float v = 0.0;
   if (uField == 0) v = T;
@@ -1999,6 +2564,15 @@ void main() {
   else if (uField == 7) v = q.s.x;
   else if (uField == 9) { vec4 m = texelFetch(uT2, ij, 0); v = m.w > 0.0 ? log(max(m.x / m.w, 1.0)) / log(10.0) : 0.0; }
   else if (uField == 10) v = q.s.x > 0.003 ? (q.s.x - q.s.y) / q.s.x : 0.0;
+  else if (uField == 11) v = q.s.y;
+  else if (uField == 12) v = q.s.w;
+  else if (uField == 13) {
+    // burning rate per unit mass on a log scale, same model as the solver
+    vec4 m = texelFetch(uT2, ij, 0);
+    float avail = min(q.s.y, (q.s.w + 0.233 * max(1.0 - q.s.x, 0.0)) / uChemV.y);
+    float kin = uChemV.z * p * exp(-9000.0 / max(T, 200.0));
+    v = log(1.0 + 1e5 * avail * min(max(m.z, 4.0 * m.x / rho), kin)) / log(10.0);
+  }
   else v = T;
   float t = (v - uRange.x) / (uRange.y - uRange.x);
   if (uField == 2) t = v;
@@ -2301,6 +2875,7 @@ class Renderer {
     gl.uniform1i(pr.u.uField, V.fieldIndex === 8 ? 0 : V.fieldIndex);
     gl.uniform2f(pr.u.uRange, V.range[0], V.range[1]);
     gl.uniform1f(pr.u.uReN, V.ReN); gl.uniform1f(pr.u.uRaN, V.RaN);
+    gl.uniform3fv(pr.u.uRs, V.Rs); gl.uniform4fv(pr.u.uChemV, V.chemK);
     gl.uniform4f(pr.u.uTscale, T_REF, V.Tc, V.Ta, 0);
     gl.uniform1f(pr.u.uSchlGain, V.schlGain);
     gl.uniform1f(pr.u.uVelScale, U_REF);
@@ -2358,6 +2933,10 @@ class Renderer {
       gl.drawArrays(gl.POINTS, 0, this.PN[0] * this.PN[1]);
       gl.disable(gl.BLEND);
     }
+    if (V.droplets && s.spray && s.spray.ready) {
+      s.spray.draw(V.view, V.mirror, V.dropScale, V.dpr);
+      gl.bindVertexArray(s.vao);
+    }
     if (V.glow) {
       const P = this.post;
       gl.bindVertexArray(s.vao);
@@ -2392,6 +2971,8 @@ const S = {
   base: false, bodyRatio: 1.5,
   Pc: 196, throttle: 100, Tc: 3670, Mw: 22, gamma: 1.22, qAb: 6.8, sAir: 1.8,
   viscous: true, afterburn: true, Tw: 800, inletAbsorb: 100, minCells: 8,
+  injMode: false, injType: 'shower', injRings: 6, injDP: 20, injD: 1.5, injTMR: 1, injAngle: 30, OF: 2.3, droplets: true,
+  film: 0, baffles: 0, baffleH: 30, cavD: 0, cavW: 40,
   alt: 0, mach: 0,
   ascent: false, ascentTop: 35, ascentDur: 40, ascentMachTop: 3.0, ascentMach: true, throttleSweep: false,
   res: 1024, domainL: 1.2, aspect: 0.28, startMode: 'ramp', rampMs: 0.12, cfl: 0.6, order2: true, wallModel: 'cut',
@@ -2415,7 +2996,7 @@ const CONTROLS = [
     { key: 'bellPct', label: 'Bell length', min: 60, max: 100, step: 1, unit: '% of 15° cone', kind: 'geo', d: 0, show: () => S.type === 'bell' },
     { key: 'coneAngle', label: 'Cone half-angle', min: 6, max: 35, step: 0.5, unit: '°', kind: 'geo', d: 1, show: () => S.type === 'cone' },
     { key: 'CR', label: 'Contraction ratio', min: 1.8, max: 12, step: 0.1, unit: 'Ac/At', kind: 'geo', d: 1 },
-    { key: 'chamberLen', label: 'Chamber length', min: 0.6, max: 4, step: 0.1, unit: '× Rc', kind: 'geo', d: 1 },
+    { key: 'chamberLen', label: 'Chamber length', min: 0.6, max: 10, step: 0.1, unit: '× Rc', kind: 'geo', d: 1 },
     { key: 'base', label: 'Rocket body around engine', type: 'toggle', kind: 'geo' },
     { key: 'bodyRatio', label: 'Body diameter', min: 1.05, max: 3, step: 0.05, unit: '× nozzle', kind: 'geo', d: 2, show: () => S.base },
   ] },
@@ -2432,6 +3013,22 @@ const CONTROLS = [
     { key: 'viscous', label: 'Viscosity, turbulence & boundary layers', type: 'toggle', kind: 'live2' },
     { key: 'Tw', label: 'Nozzle wall temperature', min: 300, max: 2000, step: 10, unit: 'K', kind: 'live', d: 0, show: () => S.viscous, hint: () => 'Sets the heat lost to the wall. Regeneratively cooled walls run near 800 K' },
     { key: 'afterburn', label: 'Afterburning in the plume', type: 'toggle', kind: 'live2' },
+  ] },
+  { section: 'Injector & chamber', open: true, items: [
+    { key: 'injMode', label: 'Simulate injectors, sprays and flame', type: 'toggle', kind: 'reset', hint: () => injectorHint() },
+    { key: 'injType', label: 'Injector type', type: 'select', kind: 'reset', show: () => S.injMode, options: [['shower', 'Showerhead (alternating rings)'], ['coax', 'Coaxial shear'], ['impinge', 'Impinging doublets'], ['pintle', 'Pintle']] },
+    { key: 'injRings', label: 'Rings of elements', min: 1, max: 12, step: 1, unit: '', kind: 'reset', d: 0, show: () => S.injMode && S.injType !== 'pintle' },
+    { key: 'OF', label: 'Mixture ratio O/F', min: 0.5, max: 10, step: 0.05, unit: '', kind: 'reset', d: 2, show: () => S.injMode, hint: () => { const sp = PROPELLANTS[S.prop] && PROPELLANTS[S.prop].spray; return sp ? `Design ${fmt(sp.OF, 1)} · stoichiometric ${fmt(sp.s, 1)}` : ''; } },
+    { key: 'injDP', label: 'Injector pressure drop', min: 5, max: 50, step: 1, unit: '% Pc', kind: 'reset', d: 0, show: () => S.injMode, hint: () => 'Sets the injection speed. Below about 15 % real engines risk feed-system instability' },
+    { key: 'injD', label: 'Orifice size', min: 0.4, max: 5, step: 0.1, unit: 'mm', kind: 'reset', d: 1, show: () => S.injMode, hint: () => 'Sets the starting drop size. Smaller orifices burn closer to the face' },
+    { key: 'injAngle', label: 'Impingement half-angle', min: 10, max: 45, step: 1, unit: '°', kind: 'reset', d: 0, show: () => S.injMode && S.injType === 'impinge' },
+    { key: 'injTMR', label: 'Total momentum ratio', min: 0.1, max: 4, step: 0.05, unit: '', kind: 'reset', d: 2, show: () => S.injMode && S.injType === 'pintle', hint: () => `Spray cone angle ${fmt(Math.atan(Math.sqrt(S.injTMR)) * 180 / Math.PI, 0)}° from the axis` },
+    { key: 'droplets', label: 'Show droplets (fuel amber, oxidiser blue)', type: 'toggle', kind: 'view', show: () => S.injMode },
+    { key: 'film', label: 'Film cooling', min: 0, max: 30, step: 1, unit: '% of fuel', kind: 'reset', d: 0, show: () => S.injMode },
+    { key: 'baffles', label: 'Ring baffles', min: 0, max: 4, step: 1, unit: '', kind: 'reset', d: 0, show: () => S.injMode },
+    { key: 'baffleH', label: 'Baffle height', min: 5, max: 80, step: 1, unit: '% Rc', kind: 'reset', d: 0, show: () => S.injMode && S.baffles > 0 },
+    { key: 'cavD', label: 'Acoustic cavity depth', min: 0, max: 40, step: 1, unit: '% Rc', kind: 'reset', d: 0, show: () => S.injMode },
+    { key: 'cavW', label: 'Acoustic cavity width', min: 5, max: 100, step: 1, unit: '% Rc', kind: 'reset', d: 0, show: () => S.injMode && S.cavD > 0 },
   ] },
   { section: 'Flight & environment', open: true, items: [
     { key: 'alt', label: 'Altitude', min: 0, max: 45, step: 0.1, unit: 'km', kind: 'live', d: 1, hint: () => { const a = atmosphere(S.alt * 1000); return `Ambient ${fmt(a.p / 1000, a.p < 1000 ? 3 : 1)} kPa · ${fmt(a.T, 0)} K`; } },
@@ -2564,7 +3161,16 @@ function cfgFromS() {
     alt: S.alt * 1000, mach: S.mach, base: S.base, bodyRatio: S.bodyRatio, domainL: S.domainL, Nx: S.res,
     aspect: S.aspect, startMode: S.startMode, rampMs: S.rampMs, cfl: S.cfl, order2: S.order2, wallModel: S.wallModel,
     minCells: S.minCells, viscous: S.viscous, afterburn: S.afterburn, qAb: S.qAb, sAir: S.sAir, Tw: S.Tw, inletAbsorb: S.inletAbsorb / 100,
+    prop: S.prop, injMode: S.injMode, injType: S.injType, injRings: S.injRings, injDP: S.injDP, injD: S.injD, injTMR: S.injTMR, injAngle: S.injAngle, OF: S.OF,
+    film: S.film, baffles: S.baffles, baffleH: S.baffleH, cavD: S.cavD, cavW: S.cavW,
   };
+}
+function injectorHint() {
+  if (S.injMode && !(PROPELLANTS[S.prop] && PROPELLANTS[S.prop].spray)) return 'Choose kerolox, methalox or hydrolox: this mode needs liquid-oxygen propellants';
+  if (!S.injMode) return 'Replaces the hot-gas source with liquid sprays, mixing and a flame. The grid closes in around the engine';
+  const c = setup && setup.contour; if (!c) return '';
+  const Vc = Math.PI * c.Rc * c.Rc * c.Lc, At = Math.PI * c.Rt * c.Rt;
+  return `L* ≈ ${fmt((Vc + 0.5 * Math.PI * (c.Rc * c.Rc + c.Rt * c.Rt) * (c.xt - c.Lc)) / At, 2)} m`;
 }
 function liveTargets() {
   return { Pc: S.Pc * 1e5 * S.throttle / 100, Tc: S.Tc, Mw: S.Mw, alt: S.alt * 1000, mach: S.mach };
@@ -2586,6 +3192,9 @@ function restart() {
     if (gridChanged) { solver.resize(setup.Nx, setup.Nr); renderer.resize(setup.Nx, setup.Nr); }
   } catch (e) { showMsg('<b>Grid too large for this GPU.</b><br>' + e.message); return; }
   solver.setGeometry(setup.geo);
+  if (!solver.spray) { solver.spray = new GPUSpray(solver); solver.spray.resize(); }
+  if (setup.injector && !solver.spray.blendOk) showMsg('<b>This GPU cannot blend floating-point textures,</b> which the spray model needs. Switch off injector mode.');
+  solver.spray.setInjector(setup.injector);
   const init = setup.initialState();
   solver.setState(init.A, init.B);
   renderer.resetParticles();
@@ -2593,6 +3202,7 @@ function restart() {
   live = liveTargets();
   P = setup.P;
   stepsTotal = 0; simTime = 0; perf = null; chamber = null; lastReadT = -1; axisData = null; sep = null; sepHold = 0; readGen++; probeData = null; budget = Math.max(2, Math.min(budget, 6));
+  chamberPerf = null; wallGasT = 0;
   if (gridChanged || !view.fitted) fitView();
   refreshHints();
 }
@@ -2607,6 +3217,7 @@ function remesh() {
     if (ns.Nx !== setup.Nx || ns.Nr !== setup.Nr) { restart(); return; }
     setup = ns;
     solver.setGeometry(setup.geo);
+    if (solver.spray) solver.spray.setInjector(setup.injector);
     refreshHints();
     // a smaller throat can drop below the minimum: re-grid once dragging has stopped
     clearTimeout(resetTimer);
@@ -2712,6 +3323,8 @@ function displayRange(field = S.field) {
     case 'exh': return { r: [0, 1], unit: '', d: 2 };
     case 'turb': return { r: [0, 4], unit: '', d: 0 };
     case 'burn': return { r: [0, 1], unit: '', d: 2 };
+    case 'fuel': case 'ox': return { r: [0, 0.6], unit: '', d: 2 };
+    case 'heat': return { r: [0.5, 4.5], unit: '', d: 0 };
     default: return { r: [0, 1], unit: '', d: 1 };
   }
 }
@@ -2719,7 +3332,8 @@ function V() {
   const dr = displayRange();
   const split = S.split && S.mirror;
   return {
-    fieldIndex: fieldIndex(), range: dr.r, ReN: P.ReN, RaN: P.RaN,
+    fieldIndex: fieldIndex(), range: dr.r, ReN: P.ReN, RaN: P.RaN, Rs: P.Rs, chemK: P.chemK,
+    droplets: !!(P.inj && S.droplets), dropScale: 25000, dpr: window.devicePixelRatio || 1,
     split, fieldIndex2: FIELDS.findIndex(f => f.id === S.field2), range2: displayRange(S.field2).r,
     Tc: live.Tc, Ta: P.Ta, schlGain: S.schlGain, dx: setup.dx,
     view: viewVec(), mirror: S.mirror, sonic: +S.sonic, bg: (S.field === 'flame' || (S.split && S.field2 === 'flame')) ? [0.012, 0.016, 0.035] : [0.02, 0.025, 0.05],
@@ -2761,6 +3375,8 @@ function drawColorbar(field, bx, by, bw, dpr, tag) {
   else if (field === 'vort') { lo = '0'; hi = 'strong shear'; }
   else if (field === 'turb') { lo = 'laminar'; hi = '10,000 × laminar'; }
   else if (field === 'burn') { lo = 'unburnt'; hi = 'fully burnt'; }
+  else if (field === 'fuel' || field === 'ox') { lo = '0'; hi = '≥ 60 % by mass'; }
+  else if (field === 'heat') { lo = 'none'; hi = 'intense'; }
   else { lo = lab(dr.r[0]); hi = lab(dr.r[1]) + (dr.unit && !dr.log ? ' ' + dr.unit : dr.log && field === 'dens' ? ' kg/m³' : ''); }
   ov.textAlign = 'left'; ov.fillText(name, bx, by - 6 * dpr);
   ov.textBaseline = 'top';
@@ -2796,6 +3412,14 @@ function drawOverlay() {
       for (let k = c.pts.length - 1; k >= 0; k--) { const [x, r] = c.pts[k]; if (x > xb) continue; p = cellToScreen(x / dx, s * (r + tw * 0.5) / dx, v); ov.lineTo(p[0], p[1]); }
       p = cellToScreen(0, s * (c.Rc + tw * 0.5) / dx, v); ov.lineTo(p[0], p[1]);
       ov.closePath(); ov.fillStyle = '#0b0d13'; ov.fill(); ov.strokeStyle = 'rgba(170,185,210,0.55)'; ov.stroke();
+    }
+  }
+  // pintle post and baffles
+  if (setup.solids && setup.solids.length) {
+    ov.strokeStyle = 'rgba(210,220,235,0.9)'; ov.lineWidth = 1 * dpr; ov.fillStyle = 'rgba(40,46,60,0.9)';
+    for (const q of setup.solids) for (const s of signs) {
+      const a = cellToScreen(Math.max(q.x0, 0) / dx, s * Math.max(q.r0, 0) / dx, v), b = cellToScreen(q.x1 / dx, s * q.r1 / dx, v);
+      ov.fillRect(a[0], a[1], b[0] - a[0], b[1] - a[1]); ov.strokeRect(a[0], a[1], b[0] - a[0], b[1] - a[1]);
     }
   }
   // separation point on the nozzle wall
@@ -2884,6 +3508,18 @@ function processAxis(row, rowB) {
 function readAxis() { processAxis(solver._readRect(solver.state.A, 0, 0, setup.Nx, 1), solver._readRect(solver.state.B, 0, 0, setup.Nx, 1)); }
 // Separation read-out: a short hold stops the marker flickering as the shock foot moves.
 let sep = null, sepHold = 0;
+let chamberPerf = null, wallGasT = 0;
+function processThroat(col) {
+  const now = chamberPerformance(setup, col);
+  chamberPerf = chamberPerf ? { mdot: chamberPerf.mdot + 0.1 * (now.mdot - chamberPerf.mdot), unburntOx: chamberPerf.unburntOx + 0.1 * (now.unburntOx - chamberPerf.unburntOx), fuelVapour: chamberPerf.fuelVapour + 0.1 * (now.fuelVapour - chamberPerf.fuelVapour) } : now;
+}
+// mean gas temperature next to the chamber wall, from the near-wall sound speed
+function processChamberWall(row) {
+  let s = 0, n = 0;
+  const g = S.gamma, end = Math.floor(setup.contour.Lc / setup.dx);
+  for (let i = 2; i < end; i++) { const c = row[i * 4 + 3]; if (c > 0) { s += c * c / (g * P.ReN) * T_REF; n++; } }
+  if (n) wallGasT = wallGasT ? wallGasT + 0.1 * (s / n - wallGasT) : s / n;
+}
 function processWall(row) {
   const now = wallSeparation(setup, row, atmosphere(live.alt).p);
   if (now) { sep = sep ? { ...now, x: sep.x + (now.x - sep.x) * 0.2, frac: sep.frac + (now.frac - sep.frac) * 0.2 } : now; sepHold = 12; }
@@ -2901,6 +3537,8 @@ function asyncReadback() {
     processMeasurements(tPrev, { A: d.colA, B: d.colB }, d.chA, d.chB);
     if (d.axis) processAxis(d.axis, d.axisB);
     if (d.wall && S.viscous) processWall(d.wall); else if (!S.viscous) sep = null;
+    if (d.wall && P.inj) processChamberWall(d.wall);
+    if (d.thA && P.inj) processThroat({ A: d.thA, B: d.thB });
     if (d.prA) probeData = { cell: res.probe, q: cellPrimSI(setup, d.prA, d.prB) };
   }
   if (!solver._async) {
@@ -2912,6 +3550,7 @@ function asyncReadback() {
       { name: 'chB', tex: st.B, x: setup.iChamber, y: 0, w: 1, h: 1 },
       { name: 'wall', tex: solver.drawWallRow(), x: 0, y: 0, w: setup.Nx, h: 1 },
     ];
+    if (P.inj) reqs.push({ name: 'thA', tex: st.A, x: setup.iThroat, y: 0, w: 1, h: setup.Nr }, { name: 'thB', tex: st.B, x: setup.iThroat, y: 0, w: 1, h: setup.Nr });
     if (S.centerPlot) reqs.push({ name: 'axis', tex: st.A, x: 0, y: 0, w: setup.Nx, h: 1 }, { name: 'axisB', tex: st.B, x: 0, y: 0, w: setup.Nx, h: 1 });
     const pc = probeCell;
     if (pc) { reqs.push({ name: 'prA', tex: st.A, x: pc.i, y: pc.j, w: 1, h: 1 }, { name: 'prB', tex: st.B, x: pc.i, y: pc.j, w: 1, h: 1 }); }
@@ -2972,7 +3611,7 @@ function updateHUD() {
     setMetric('thrust', fv, fu, `ideal ${iv} ${iu}`);
     setMetric('mach', fmt(perf.Me, 2), '', `ideal ${fmt(t.Me, 2)}`);
     setMetric('tc', fmt(chamber.T, 0), 'K', `target ${fmt(live.Tc, 0)} K`);
-    setMetric('pc', fmt(chamber.p / 1e6, chamber.p < 1e6 ? 2 : 1), 'MPa', `target ${fmt(live.Pc / 1e6, 2)} MPa · ${fmt(live.Pc / 1e5, 0)} bar`);
+    setMetric('pc', fmt(chamber.p / 1e6, chamber.p < 1e6 ? 2 : 1), 'MPa', P.inj ? `c* efficiency ${fmt(100 * chamber.p / live.Pc, 0)} % · target ${fmt(live.Pc / 1e5, 0)} bar` : `target ${fmt(live.Pc / 1e6, 2)} MPa · ${fmt(live.Pc / 1e5, 0)} bar`);
     setMetric('isp', fmt(Math.max(perf.Isp, 0), 0), 's', `ideal ${fmt(t.Isp, 0)} s · vac ${fmt(t.IspVac, 0)} s`);
     const ratio = perf.pe / Math.max(atmosphere(live.alt).p, 1e-9);
     const mstate = atmosphere(live.alt).p < 1 ? 'vacuum' : ratio > 1.08 ? 'under-expanded' : ratio < 0.92 ? 'over-expanded' : 'near-ideal';
@@ -2999,6 +3638,10 @@ function updateTheoryPanel() {
       ${row('Isp', fmt(t.Isp, 0) + ' s', perf ? fmt(perf.Isp, 0) + ' s' : '—')}
       ${row('Chamber pressure', fmt((live ? live.Pc : 0) / 1e5, 1) + ' bar', chamber ? fmt(chamber.p / 1e5, 1) + ' bar' : '—')}
       ${row('Chamber temp.', fmt(live ? live.Tc : 0, 0) + ' K', chamber ? fmt(chamber.T, 0) + ' K' : '—')}
+      ${P && P.inj && chamber ? row('c* efficiency', '100 %', fmt(100 * chamber.p / live.Pc, 1) + ' %') : ''}
+      ${P && P.inj && chamberPerf ? row('Oxidiser unburnt at throat', '—', fmt(100 * chamberPerf.unburntOx, 1) + ' % of flow') : ''}
+      ${P && P.inj && chamberPerf ? row('Fuel vapour at throat', '—', fmt(100 * chamberPerf.fuelVapour, 1) + ' % of flow') : ''}
+      ${P && P.inj && wallGasT ? row('Gas temp. at chamber wall', '—', fmt(wallGasT, 0) + ' K') : ''}
       ${row('Separation point', (() => { const f = setup ? summerfieldPoint(setup.contour, live ? live.Pc : S.Pc * 1e5, S.gamma, pa) : null; return f === null ? 'attached' : fmt(f * 100, 0) + ' % of bell'; })(), !S.viscous ? 'viscosity off' : sep ? fmt(sep.frac * 100, 0) + ' % of bell' : 'attached')}
       ${sep ? row('Wall p / pa at separation', '0.40', fmt(sep.pRatio, 2)) : ''}
       <tr class="head"><td colspan="3" style="padding-top:10px">Ideal nozzle numbers</td></tr>
@@ -3322,14 +3965,16 @@ function onChange(it) {
       if (S.prop !== 'custom') {
         const gChanged = Math.abs(p.gamma - S.gamma) > 1e-9;
         S.Tc = p.Tc; S.gamma = p.gamma; S.Mw = p.Mw; S.qAb = p.qAb; S.sAir = p.sAir;
-        ['Tc', 'gamma', 'Mw', 'qAb'].forEach(syncControl);
-        if (gChanged) restartSoon();
+        if (p.spray) S.OF = p.spray.OF;
+        ['Tc', 'gamma', 'Mw', 'qAb', 'OF'].forEach(syncControl);
+        if (gChanged || S.injMode) restartSoon();
       }
       break;
     }
     case 'mode': ascentT = 0; sweepT = 0; if (!S.throttleSweep && it.key === 'throttleSweep') { S.throttle = 100; syncControl('throttle'); } break;
   }
-  if (['Tc', 'gamma', 'Mw', 'qAb'].includes(it.key) && S.prop !== 'custom') { S.prop = 'custom'; syncControl('prop'); }
+  if (['Tc', 'gamma', 'Mw', 'qAb'].includes(it.key) && S.prop !== 'custom' && !S.injMode) { S.prop = 'custom'; syncControl('prop'); }
+  if (it.key === 'injMode') { view.fitted = false; }
   if (it.key === 'split' && S.split && !S.mirror) { S.mirror = true; syncControl('mirror'); view.fitted = false; fitView(); }
   if (it.key === 'mirror') { if (!S.mirror && S.split) { S.split = false; syncControl('split'); } view.fitted = false; fitView(); }
   if (it.key === 'cmap') renderer.setColormap(S.cmap);
@@ -3342,7 +3987,9 @@ function applyPreset(key) {
   const p = PROPELLANTS[e.prop];
   Object.assign(S, { preset: key, prop: e.prop, Tc: p.Tc, gamma: p.gamma, Mw: p.Mw, qAb: p.qAb, sAir: p.sAir, Pc: e.Pc, throttle: 100, Dt: e.Dt, De: e.De,
     type: e.type, bellPct: e.bellPct, coneAngle: e.coneAngle, CR: e.CR, chamberLen: e.chamberLen, alt: e.alt, mach: e.mach,
-    base: e.base, domainL: e.domain, ascent: false, throttleSweep: false });
+    base: e.base, domainL: e.domain, ascent: false, throttleSweep: false, injMode: false });
+  if (p.spray) S.OF = p.spray.OF;
+  if (e.inj) Object.assign(S, e.inj);
   for (const k in rows) syncControl(k);
   refreshVisibility();
   view.fitted = false;
@@ -3461,7 +4108,8 @@ const HELP_HTML = `
 <tr><td><span class="kbd">H</span></td><td class="n">hide panel</td></tr>
 <tr><td><span class="kbd">Shift</span>+<span class="kbd">T</span></td><td class="n">run self-test</td></tr>
 </table>
-<p class="note"><b>Limits:</b> the flow is 2-D axisymmetric, so turbulence is modelled rather than fully resolved. Boundary layers are only a few cells thick and rely on a wall model. Afterburning is one global reaction. γ changes with the gas mixture but not with temperature. Results still sharpen with grid resolution. Treat the numbers as good engineering estimates for animation, not design data.</p>
+<p class="note"><b>Injectors:</b> switch on <i>Simulate injectors, sprays and flame</i> or pick an Injector preset. Fuel droplets are amber and oxidiser droplets are blue. Try the <i>Heat release</i> tab, then change injector type, orifice size or chamber length and watch c* efficiency, shown under Pc. Injector elements are rings because the solver is axisymmetric, so baffles and cavities can't show their effect on tangential instability.</p>
+    <p class="note"><b>Limits:</b> the flow is 2-D axisymmetric, so turbulence is modelled rather than fully resolved. Boundary layers are only a few cells thick and rely on a wall model. Afterburning is one global reaction. γ changes with the gas mixture but not with temperature. Results still sharpen with grid resolution. Treat the numbers as good engineering estimates for animation, not design data.</p>
 <p class="note"><b>Speed:</b> if it's sluggish, lower the grid resolution or the speed slider. On laptops with two GPUs, make Windows run your browser on the NVIDIA card: Settings → System → Display → Graphics → your browser → High performance.</p>
 `;
 
@@ -3709,7 +4357,7 @@ function boot() {
   if (/selftest/i.test(location.hash)) setTimeout(runSelfTest, 1500);
   // expose a small API for testing / tinkering from the console
   window.nozzle = { S, get setup() { return setup; }, get solver() { return solver; }, get renderer() { return renderer; }, restart,
-    get gpu() { return window.__gpu; }, get lossCount() { return lossCount; }, get stepsPerSec() { return stepsPerSec; }, get fps() { return fps; }, get budget() { return budget; }, applyPreset, setField, get perf() { return perf; }, get chamber() { return chamber; }, get sep() { return sep; }, get simTime() { return simTime; }, get P() { return P; }, get live() { return live; },
+    get gpu() { return window.__gpu; }, get lossCount() { return lossCount; }, get stepsPerSec() { return stepsPerSec; }, get fps() { return fps; }, get budget() { return budget; }, applyPreset, setField, get perf() { return perf; }, get chamber() { return chamber; }, get chamberPerf() { return chamberPerf; }, get wallGasT() { return wallGasT; }, processThroat, processChamberWall, get sep() { return sep; }, get simTime() { return simTime; }, get P() { return P; }, get live() { return live; },
     stepNow: (n) => { solver.step(n, P); stepsTotal += n; readback(); processWall(solver._readRect(solver.drawWallRow(), 0, 0, setup.Nx, 1)); updateHUD(); }, composite, setRunning, view, fitView,
     runSelfTest, get selfTestReport() { return window.__selfTestReport; },
     loseContext: () => { const e = gl.getExtension('WEBGL_lose_context'); e.loseContext(); setTimeout(() => e.restoreContext(), 500); } };
