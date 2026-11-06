@@ -740,6 +740,9 @@ function updateProbe() {
 // ---------------------------------------------------------------------------
 const recCanvas = document.createElement('canvas');
 const recCtx = recCanvas.getContext('2d');
+recCanvas.setAttribute('aria-hidden', 'true');
+recCanvas.style.cssText = 'position:fixed;left:-100000px;top:0;width:2px;height:2px;opacity:0;pointer-events:none';
+document.body.appendChild(recCanvas);
 let recorder = null, recChunks = [], recStart = 0, shotPending = false;
 function recDims() {
   switch (S.recSize) {
@@ -747,7 +750,11 @@ function recDims() {
     case '4k': return [3840, 2160];
     case 'portrait': return [1080, 1920];
     case 'square': return [1080, 1080];
-    default: return [glCanvas.width & ~1, glCanvas.height & ~1];
+    default: {
+      // Retina / 5K screens can exceed what video encoders accept (~4096 px wide).
+      const k = Math.min(1, 3840 / glCanvas.width, 2160 / glCanvas.height);
+      return [Math.round(glCanvas.width * k) & ~1, Math.round(glCanvas.height * k) & ~1];
+    }
   }
 }
 function composite() {
@@ -810,27 +817,99 @@ function composite() {
   return recCanvas;
 }
 function stamp() { const d = new Date(), p = n => String(n).padStart(2, '0'); return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}_${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`; }
-function download(blob, name) {
-  const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name;
-  document.body.appendChild(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 2000);
+// Saving: browsers put downloads in the user's Downloads folder (or ask, if
+// they're set to). A save started outside a click (e.g. when a recording
+// finishes) can be blocked by Safari, so a toast always offers a manual
+// "Save again" link, which is a real click and always works.
+let saveToast = null, saveToastTimer = 0;
+function showSaveToast(html, url, name, keepOpen) {
+  if (!saveToast) {
+    saveToast = document.createElement('div');
+    saveToast.style.cssText = 'position:fixed;left:50%;bottom:18px;transform:translateX(-50%);z-index:60;max-width:min(560px,calc(100vw - 32px));background:rgba(8,10,16,.96);border:1px solid #3fd0ff;border-radius:8px;padding:10px 14px;font:12px/1.5 var(--mono);color:#c9d0de;box-shadow:0 6px 24px rgba(0,0,0,.5)';
+    document.body.appendChild(saveToast);
+  }
+  saveToast.innerHTML = html;
+  if (url) {
+    const a = document.createElement('a');
+    a.href = url; a.download = name; a.textContent = 'Save again';
+    a.style.cssText = 'color:#3fd0ff;margin-left:10px;text-decoration:underline;cursor:pointer';
+    saveToast.appendChild(a);
+  }
+  const x = document.createElement('span');
+  x.textContent = '×'; x.style.cssText = 'margin-left:12px;cursor:pointer;color:#8a93a6;font-size:15px';
+  x.onclick = () => { saveToast.style.display = 'none'; };
+  saveToast.appendChild(x);
+  saveToast.style.display = 'block';
+  clearTimeout(saveToastTimer);
+  if (!keepOpen) saveToastTimer = setTimeout(() => { saveToast.style.display = 'none'; }, 12000);
 }
+const savedUrls = [];
+function download(blob, name, note = '') {
+  if (!blob || !blob.size) { showSaveToast(`Couldn't create <b>${name}</b>: the browser returned an empty file.`, null, null, true); return; }
+  const url = URL.createObjectURL(blob);
+  // Keep the last few files available for "Save again"; revoke older ones.
+  savedUrls.push(url); while (savedUrls.length > 4) URL.revokeObjectURL(savedUrls.shift());
+  const a = document.createElement('a');
+  a.href = url; a.download = name; a.rel = 'noopener'; a.style.display = 'none';
+  document.body.appendChild(a);
+  try { a.click(); } catch (e) { console.warn('download click failed', e); }
+  setTimeout(() => a.remove(), 1000);
+  const mb = blob.size / 1048576;
+  showSaveToast(`Saved <b>${name}</b> (${mb >= 1 ? fmt(mb, 1) + ' MB' : fmt(blob.size / 1024, 0) + ' KB'}) to your Downloads folder.${note ? '<br>' + note : ''}<br><span style="color:#8a93a6">Not there?</span>`, url, name);
+}
+// Pick a format the browser can actually record. MP4 (H.264) first, because it
+// plays everywhere (QuickTime, Windows Photos, phones); WebM as a fallback.
+const REC_TYPES = [
+  'video/mp4;codecs=avc1.640033', 'video/mp4;codecs=avc1.4d0033', 'video/mp4;codecs=avc1', 'video/mp4;codecs=h264', 'video/mp4',
+  'video/webm;codecs=vp9', 'video/webm;codecs=vp8', 'video/webm',
+];
+function makeRecorder(stream, bitrate) {
+  const ok = REC_TYPES.filter(t => { try { return MediaRecorder.isTypeSupported(t); } catch (e) { return false; } });
+  for (const mime of [...ok, '']) {
+    for (const bps of [bitrate, Math.min(bitrate, 16e6)]) {
+      try { return new MediaRecorder(stream, mime ? { mimeType: mime, videoBitsPerSecond: bps } : { videoBitsPerSecond: bps }); }
+      catch (e) { console.warn('MediaRecorder rejected', mime || '(default)', bps, e); }
+    }
+  }
+  return new MediaRecorder(stream);
+}
+function resetRecButton() { recorder = null; $('b-rec').classList.remove('on'); $('b-rec').textContent = '● Record'; }
 function toggleRecord() {
-  if (recorder) { recorder.stop(); return; }
-  if (!window.MediaRecorder) { alert('Recording is not supported in this browser — use Chrome or Edge.'); return; }
+  if (recorder) { if (recorder.state !== 'inactive') recorder.stop(); return; }
+  if (!window.MediaRecorder || !recCanvas.captureStream) {
+    showSaveToast('Video recording isn\'t supported in this browser. Use Chrome, Edge, Firefox or Safari 14.1+. Screenshots still work.', null, null, true);
+    return;
+  }
   composite();
-  const types = ['video/mp4;codecs=avc1.640033', 'video/mp4;codecs=avc1.4d0033', 'video/mp4;codecs=avc1', 'video/mp4', 'video/webm;codecs=vp9', 'video/webm'];
-  const mime = types.find(t => MediaRecorder.isTypeSupported(t)) || '';
-  const stream = recCanvas.captureStream(60);
-  const px = recCanvas.width * recCanvas.height;
-  recorder = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: Math.round(Math.min(60e6, Math.max(8e6, px * 12))) });
+  let stream, rec;
+  try {
+    stream = recCanvas.captureStream(60);
+    const px = recCanvas.width * recCanvas.height;
+    rec = makeRecorder(stream, Math.round(Math.min(40e6, Math.max(8e6, px * 10))));
+  } catch (e) {
+    console.error(e);
+    showSaveToast('Couldn\'t start recording: ' + (e && e.message ? e.message : e) + '. Try a smaller frame under <i>Recording</i>.', null, null, true);
+    return;
+  }
+  recorder = rec;
   recChunks = [];
-  recorder.ondataavailable = e => { if (e.data && e.data.size) recChunks.push(e.data); };
-  recorder.onstop = () => {
-    const ext = (recorder.mimeType || mime).includes('mp4') ? 'mp4' : 'webm';
-    download(new Blob(recChunks, { type: recorder.mimeType || mime }), `nozzle_cfd_${stamp()}.${ext}`);
-    recorder = null; $('b-rec').classList.remove('on'); $('b-rec').textContent = '● Record';
+  const chunks = recChunks;
+  rec.ondataavailable = e => { if (e.data && e.data.size) chunks.push(e.data); };
+  rec.onerror = e => {
+    console.error('Recorder error', e);
+    showSaveToast('Recording stopped with an error' + (e && e.error ? ': ' + e.error.message : '') + '. Try a smaller frame under <i>Recording</i>, or another browser.', null, null, true);
   };
-  recorder.start(250);
+  rec.onstop = () => {
+    stream.getTracks().forEach(t => t.stop());
+    const type = rec.mimeType || (chunks[0] && chunks[0].type) || 'video/webm';
+    const ext = type.includes('mp4') ? 'mp4' : 'webm';
+    const note = ext === 'webm' ? 'WebM file: plays in Chrome, Edge, Firefox and VLC. On a Mac, QuickTime can\'t open it; use VLC or open it in a browser.' : '';
+    resetRecButton();
+    if (!chunks.length) { showSaveToast('The recording came out empty. Try again, or pick a smaller frame under <i>Recording</i>.', null, null, true); return; }
+    download(new Blob(chunks, { type: type.split(';')[0] }), `nozzle_cfd_${stamp()}.${ext}`, note);
+  };
+  try { rec.start(1000); }
+  catch (e) { console.error(e); resetRecButton(); showSaveToast('Couldn\'t start recording: ' + (e && e.message ? e.message : e), null, null, true); return; }
   recStart = performance.now();
   $('b-rec').classList.add('on');
 }
@@ -897,7 +976,7 @@ function frame(now) {
   updateProbe();
   if (recorder || shotPending) {
     const cv = composite();
-    if (shotPending) { shotPending = false; cv.toBlob(b => download(b, `nozzle_cfd_${stamp()}.png`), 'image/png'); }
+    if (shotPending) { shotPending = false; const name = `nozzle_cfd_${stamp()}.png`; cv.toBlob(b => download(b, name), 'image/png'); }
     if (recorder) $('b-rec').textContent = `■ Stop ${fmt((now - recStart) / 1000, 0)}s`;
   }
   minFrameDt = Math.min(minFrameDt * 1.003, Math.max(dtWall, 0.004));   // info only
@@ -928,7 +1007,7 @@ function buildPanel() {
     for (const it of sec.items || []) sb.appendChild(buildRow(it));
     if (sec.customAfter === 'recnote') {
       const n = document.createElement('p'); n.className = 'note';
-      n.innerHTML = 'Press <span class="kbd">● Record</span> (or <span class="kbd">V</span>) to capture what you see, with the readouts burned in, and again to stop. The file downloads as MP4 where your browser supports it (current Chrome/Edge), otherwise WebM. Screenshots (<span class="kbd">S</span>) use the same frame.';
+      n.innerHTML = 'Press <span class="kbd">● Record</span> (or <span class="kbd">V</span>) to capture what you see, with the readouts burned in, and again to stop. The file saves to your Downloads folder as MP4 where the browser supports it (Chrome, Edge, Safari), otherwise WebM (Firefox). If nothing appears, click <i>Save again</i> in the message that pops up. Screenshots (<span class="kbd">S</span>) use the same frame.';
       sb.appendChild(n);
     }
     body.appendChild(d);
@@ -1294,20 +1373,25 @@ async function runSelfTest() {
       const blob = await new Promise(res => { const cv = composite(); cv.toBlob(res, 'image/png'); });
       log(blob && blob.size > 10000 ? 'PASS' : 'FAIL', `Screenshot ${size}: ${blob ? fmt(blob.size / 1024, 0) : 0} KB`);
     }
-    if (window.MediaRecorder) {
-      const types = ['video/mp4;codecs=avc1.640033', 'video/mp4;codecs=avc1.4d0033', 'video/mp4;codecs=avc1', 'video/mp4', 'video/webm;codecs=vp9', 'video/webm'];
-      const mime = types.find(t => MediaRecorder.isTypeSupported(t)) || '';
+    if (window.MediaRecorder && recCanvas.captureStream) {
       S.recSize = '1080p'; composite();
-      const rec = new MediaRecorder(recCanvas.captureStream(30), { mimeType: mime, videoBitsPerSecond: 12e6 });
-      const chunks = []; rec.ondataavailable = e => chunks.push(e.data);
+      const stream = recCanvas.captureStream(30);
+      const rec = makeRecorder(stream, 12e6);
+      const chunks = []; rec.ondataavailable = e => { if (e.data && e.data.size) chunks.push(e.data); };
       const stopped = new Promise(r => rec.onstop = r);
-      rec.start(250);
+      rec.start(1000);
       const t0 = performance.now();
       while (performance.now() - t0 < 2500) { composite(); await sleep(33); }
-      rec.stop(); await stopped;
+      rec.stop(); await stopped; stream.getTracks().forEach(t => t.stop());
       const size = chunks.reduce((a, b) => a + b.size, 0);
-      log(size > 20000 ? 'PASS' : 'FAIL', `Video recording (${mime || 'default'}): ${fmt(size / 1024, 0)} KB in 2.5 s`);
-    } else log('FAIL', 'Video recording: MediaRecorder not supported');
+      const type = rec.mimeType || (chunks[0] && chunks[0].type) || 'default';
+      log(size > 20000 ? 'PASS' : 'FAIL', `Video recording (${type}): ${fmt(size / 1024, 0)} KB in 2.5 s`);
+      if (size > 20000 && !type.includes('mp4')) log('WARN', 'This browser records WebM, not MP4: QuickTime on a Mac can\'t play WebM (VLC can)');
+      // Check the save path can build a downloadable link (nothing is saved)
+      try { const u = URL.createObjectURL(new Blob(chunks, { type: type.split(';')[0] })); const ok = typeof u === 'string' && u.startsWith('blob:'); URL.revokeObjectURL(u);
+        log(ok && 'download' in document.createElement('a') ? 'PASS' : 'FAIL', 'Download link can be created (files save to Downloads)'); }
+      catch (e) { log('FAIL', 'Download link: ' + e.message); }
+    } else log('FAIL', 'Video recording: not supported in this browser');
     S.recSize = saved.recSize;
 
     // 7. GPU reset recovery

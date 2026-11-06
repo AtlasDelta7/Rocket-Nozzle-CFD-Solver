@@ -135,7 +135,7 @@ Downstream of that point, the near-wall flow runs back up the bell at around 20�
 
 **Keys:** `Space` play/pause · `R` restart · `N` single step · `1–9` fields · `C` sonic line / Mach contours · `P` particles · `M` mirror · `F` fit view · `V` record · `S` screenshot · `H` hide panel · `Shift+T` self-test.
 
-**Recording:** `● Record` captures the view with the readouts burned in (MP4 in current Chrome/Edge, otherwise WebM). Pick the frame under *Recording*: window, 1080p, 4K, **portrait 1080×1920** or square. Tip: turn the speed slider down for slow-motion start-ups.
+**Recording:** `● Record` captures the view with the readouts burned in. Videos and screenshots save to your **Downloads** folder on Windows and Mac: MP4 in Chrome, Edge and Safari (plays in QuickTime and Windows Photos), WebM in Firefox (use VLC on a Mac). A message confirms each save; if the file doesn't appear (Safari can block saves it didn't see a click for), click *Save again* in that message. In Safari, allow downloads for the page if asked. Pick the frame under *Recording*: window, 1080p, 4K, **portrait 1080×1920** or square. Tip: turn the speed slider down for slow-motion start-ups.
 
 Your settings are remembered between sessions in this browser. "Reset all settings to defaults" (Simulation section) clears them.
 
